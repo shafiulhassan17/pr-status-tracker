@@ -112,6 +112,7 @@ export function runExcelImport() {
     if (!cols.includes('tracking_status')) db.exec(`ALTER TABLE pr_lines ADD COLUMN tracking_status TEXT`);
     if (!cols.includes('status_remarks')) db.exec(`ALTER TABLE pr_lines ADD COLUMN status_remarks TEXT`);
     if (!cols.includes('assigned_vendor')) db.exec(`ALTER TABLE pr_lines ADD COLUMN assigned_vendor TEXT`);
+    if (!cols.includes('prl_status')) db.exec(`ALTER TABLE pr_lines ADD COLUMN prl_status TEXT DEFAULT 'Closed'`);
   } catch (e) {
     console.log('pr_lines column check:', e.message);
   }
@@ -148,12 +149,12 @@ export function runExcelImport() {
   const insertLine = db.prepare(`
     INSERT INTO pr_lines (
       id, plant, pr_number, po_number, vendor_name, remarks, line_number,
-      item_id, item_name, unit, site, warehouse, po_status, tracking_status, status_remarks, assigned_vendor,
+      item_id, item_name, unit, site, warehouse, po_status, prl_status, tracking_status, status_remarks, assigned_vendor,
       purch_qty, received_qty, dlv_remain_qty, invoiced_qty, inv_remain_qty, cancelled_qty,
       purchase_price, po_create_date, expected_dlv_date, confirm_dlv_date, last_grn_date, last_invoice_date
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?
     )
@@ -169,6 +170,7 @@ export function runExcelImport() {
         site = ?,
         warehouse = ?,
         po_status = ?,
+        prl_status = ?,
         purch_qty = ?,
         received_qty = ?,
         dlv_remain_qty = ?,
@@ -301,6 +303,7 @@ export function runExcelImport() {
             site,
             warehouse,
             poStatus,
+            'Closed',
             purchQty,
             receivedQty,
             dlvRemainQty,
@@ -339,6 +342,7 @@ export function runExcelImport() {
             site,
             warehouse,
             poStatus,
+            'Closed',
             poStatus,
             `PO issued: ${poStatus}`,
             assignedVendor,
@@ -447,6 +451,7 @@ export function runExcelImport() {
             site,
             warehouse,
             polStatus,
+            prlStatus,
             poQty,
             recQty,
             Math.max(0, poQty - recQty),
@@ -484,6 +489,7 @@ export function runExcelImport() {
             site,
             warehouse,
             polStatus,
+            prlStatus,
             polStatus,
             poNumber ? `PO ${poNumber}` : `Awaiting PO issuance`,
             assignedVendor,

@@ -108,6 +108,7 @@ try {
   if (!cols.includes('tracking_status')) db.exec(`ALTER TABLE pr_lines ADD COLUMN tracking_status TEXT`);
   if (!cols.includes('status_remarks')) db.exec(`ALTER TABLE pr_lines ADD COLUMN status_remarks TEXT`);
   if (!cols.includes('assigned_vendor')) db.exec(`ALTER TABLE pr_lines ADD COLUMN assigned_vendor TEXT`);
+  if (!cols.includes('prl_status')) db.exec(`ALTER TABLE pr_lines ADD COLUMN prl_status TEXT DEFAULT 'Closed'`);
 } catch (e) {
   console.log('pr_lines column check:', e.message);
 }
@@ -123,30 +124,42 @@ if (lineCountRow && lineCountRow.count === 0) {
 function computeGeneralPrStatus(lines) {
   if (!lines || lines.length === 0) return 'No lines';
 
+  const prlStatuses = lines.map(l => (l.prl_status || '').toLowerCase());
   const statuses = lines.map(l => (l.tracking_status || l.po_status || '').toLowerCase());
   const hasNoPo = lines.some(l => !l.po_number || l.po_number.trim() === '');
   const allNoPo = lines.every(l => !l.po_number || l.po_number.trim() === '');
 
+  // 1. Check if all lines are Invoiced (Completed / Settled)
+  const allInvoiced = lines.every(l => {
+    const s = (l.tracking_status || l.po_status || '').toLowerCase();
+    return s.includes('invoiced');
+  });
+  if (allInvoiced && !allNoPo) return 'Invoiced';
+
+  // 2. Pre-procurement / no PO yet: Check PRL STATUS from PR report
   if (allNoPo) {
-    if (statuses.some(s => s.includes('reject'))) return 'PR Rejected';
-    if (statuses.some(s => s.includes('review'))) return 'PR In Review';
+    if (prlStatuses.every(s => s === 'draft')) return 'PR Draft';
+    if (prlStatuses.every(s => s === 'inreview' || s.includes('review'))) return 'PR In Review';
+    if (prlStatuses.every(s => s === 'rejected' || s.includes('reject'))) return 'PR Rejected';
+    if (prlStatuses.every(s => s === 'cancelled' || s.includes('cancel'))) return 'PR Cancelled';
+    if (prlStatuses.some(s => s === 'draft')) return 'PR Draft';
+    if (prlStatuses.some(s => s === 'inreview')) return 'PR In Review';
+    if (prlStatuses.some(s => s === 'rejected')) return 'PR Rejected';
     return 'Pending PO Creation';
   }
 
-  const allInvoiced = statuses.every(s => s.includes('invoiced'));
-  if (allInvoiced) return 'Invoiced';
-
+  // 3. Lines with PO created
   const allReceived = statuses.every(s => s.includes('received') || s.includes('invoiced'));
   if (allReceived) return 'Fully Received';
 
-  const anyReceived = lines.some(l => l.received_qty > 0 || (l.tracking_status && l.tracking_status.toLowerCase().includes('received')));
+  const anyReceived = lines.some(l => (Number(l.received_qty) || 0) > 0 || (l.tracking_status && l.tracking_status.toLowerCase().includes('received')));
   if (anyReceived) return 'Partially Delivered';
-
-  const allOpen = statuses.every(s => s.includes('open order') || s === 'open');
-  if (allOpen) return 'Open order';
 
   const allCancelled = statuses.every(s => s.includes('cancelled'));
   if (allCancelled) return 'Cancelled';
+
+  const allOpen = statuses.every(s => s.includes('open order') || s === 'open');
+  if (allOpen && !hasNoPo) return 'Open order';
 
   if (hasNoPo) return 'Partially PO Converted';
 
@@ -234,6 +247,10 @@ app.get('/api/prs', (req, res) => {
       const earliestExpected = expectedDates[0] || '';
       const isOverdue = earliestExpected && earliestExpected < today && (pendingLines > 0 || partiallyDeliveredLines > 0);
 
+      const isInvoiced = generalStatus === 'Invoiced';
+      const isPreApprovalOrCancelled = ['PR Draft', 'PR In Review', 'PR Rejected', 'PR Cancelled', 'Cancelled'].includes(generalStatus);
+      const isActive = !isInvoiced && !isPreApprovalOrCancelled;
+
       const summary = {
         pr_number: prNumber,
         plant: plants[0] || 'CEPL',
@@ -241,6 +258,9 @@ app.get('/api/prs', (req, res) => {
         has_po: distinctPOs.length > 0,
         remarks: distinctRemarks.join(' | ') || '',
         general_status: generalStatus,
+        is_active: isActive,
+        is_invoiced: isInvoiced,
+        is_pre_approval: isPreApprovalOrCancelled,
         total_lines: totalLines,
         lines_with_po: linesWithPo,
         lines_without_po: linesWithoutPo,
@@ -267,7 +287,13 @@ app.get('/api/prs', (req, res) => {
       }
 
       if (status && status !== 'All') {
-        if (status === 'Overdue') {
+        if (status === 'Active') {
+          if (!summary.is_active) continue;
+        } else if (status === 'Invoiced') {
+          if (!summary.is_invoiced) continue;
+        } else if (status === 'PreApproval') {
+          if (!summary.is_pre_approval) continue;
+        } else if (status === 'Overdue') {
           if (!summary.is_overdue) continue;
         } else if (status === 'Without PO') {
           if (summary.has_po) continue;
@@ -583,42 +609,83 @@ app.get('/api/kpis', (req, res) => {
     }
 
     const allLines = db.prepare(query).all(...params);
-    const distinctPrs = new Set(allLines.map(l => l.pr_number));
 
-    let totalLines = allLines.length;
-    let fullyDelivered = 0;
-    let partiallyDelivered = 0;
-    let openPending = 0;
-    let invoicedCount = 0;
-    let overdueCount = 0;
+    // Group lines by PR
+    const prGroups = new Map();
+    for (const l of allLines) {
+      if (!prGroups.has(l.pr_number)) {
+        prGroups.set(l.pr_number, []);
+      }
+      prGroups.get(l.pr_number).push(l);
+    }
+
+    // Classify PRs: Invoiced (completed/done), Pre-Approval (Draft/InReview/Rejected/Cancelled), or Active
+    const invoicedPrs = new Set();
+    const preApprovalPrs = new Set();
+    const activePrs = new Set();
+
+    for (const [prNum, lines] of prGroups.entries()) {
+      const gStatus = computeGeneralPrStatus(lines);
+      if (gStatus === 'Invoiced') {
+        invoicedPrs.add(prNum);
+      } else if (['PR Draft', 'PR In Review', 'PR Rejected', 'PR Cancelled', 'Cancelled'].includes(gStatus)) {
+        preApprovalPrs.add(prNum);
+      } else {
+        activePrs.add(prNum);
+      }
+    }
+
+    // Counters for active PRs and active lines only (invoiced & pre-approval PRs excluded from all active metrics)
+    let activeLinesCount = 0;
     let linesWithPo = 0;
-    let linesWithoutPo = 0;
+    let linesPendingPo = 0;
+    let exactFullyDelivered = 0;
+    let deliveredWithin5Pct = 0;
+    let partiallyDelivered = 0; // >5% shortage
+    let overDelivered = 0;       // >5% excess
+    let openPending = 0;
+    let overdueCount = 0;
 
     const today = new Date().toISOString().split('T')[0];
 
     for (const l of allLines) {
+      // RULE: Do not count lines belonging to Invoiced PRs or pre-approval/rejected PRs
+      if (!activePrs.has(l.pr_number)) {
+        continue;
+      }
+
+      activeLinesCount++;
+
       const pQty = Number(l.purch_qty) || 0;
       const rQty = Number(l.received_qty) || 0;
       const status = (l.tracking_status || l.po_status || '').toLowerCase();
+      const prl = (l.prl_status || '').toLowerCase();
 
-      if (l.po_number && l.po_number.trim() !== '') {
+      // Lines with PO made vs Pending PO
+      if ((l.po_number && l.po_number.trim() !== '') || prl === 'closed') {
         linesWithPo++;
       } else {
-        linesWithoutPo++;
+        linesPendingPo++;
       }
 
-      if (status.includes('invoiced')) {
-        invoicedCount++;
-      }
-
-      if (pQty > 0 && rQty >= pQty) {
-        fullyDelivered++;
-      } else if (rQty > 0 && rQty < pQty) {
-        partiallyDelivered++;
-      } else if (!status.includes('cancelled') && !status.includes('reject')) {
+      // Delivery calculations (exact vs 5% tolerance)
+      if (pQty > 0) {
+        if (rQty === pQty) {
+          exactFullyDelivered++;
+        } else if (rQty > 0 && Math.abs(rQty - pQty) / pQty <= 0.05) {
+          deliveredWithin5Pct++;
+        } else if (rQty > 0 && rQty < 0.95 * pQty) {
+          partiallyDelivered++;
+        } else if (rQty > 1.05 * pQty) {
+          overDelivered++;
+        } else if (rQty === 0) {
+          openPending++;
+        }
+      } else {
         openPending++;
       }
 
+      // Overdue active deliveries
       if (l.expected_dlv_date && l.expected_dlv_date < today && rQty < pQty && !status.includes('cancelled')) {
         overdueCount++;
       }
@@ -626,15 +693,20 @@ app.get('/api/kpis', (req, res) => {
 
     res.json({
       success: true,
-      total_prs: distinctPrs.size,
-      total_lines: totalLines,
+      total_active_prs: activePrs.size,
+      active_line_items: activeLinesCount,
       lines_with_po: linesWithPo,
-      lines_without_po: linesWithoutPo,
-      fully_delivered_lines: fullyDelivered,
+      lines_without_po: linesPendingPo,
+      fully_delivered_lines: exactFullyDelivered,
+      delivered_within_5pct: deliveredWithin5Pct,
       partially_delivered_lines: partiallyDelivered,
+      over_delivered_lines: overDelivered,
       pending_lines: openPending,
-      invoiced_lines: invoicedCount,
-      overdue_lines: overdueCount
+      overdue_lines: overdueCount,
+      invoiced_prs_count: invoicedPrs.size,
+      pre_approval_prs_count: preApprovalPrs.size,
+      total_all_prs: prGroups.size,
+      total_all_lines: allLines.length
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

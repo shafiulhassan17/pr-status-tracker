@@ -197,13 +197,32 @@ async function loadKpis() {
     const res = await fetch(`/api/kpis?${params.toString()}`);
     const data = await res.json();
     if (data.success) {
-      document.getElementById('kpiTotalPrs').textContent = data.total_prs || 0;
-      document.getElementById('kpiTotalLines').textContent = `${data.total_lines || 0} Total Line Items`;
+      document.getElementById('kpiTotalPrs').textContent = data.total_active_prs || 0;
+      document.getElementById('kpiTotalLines').textContent = `${data.active_line_items || 0} Active Line Items`;
+
       document.getElementById('kpiLinesWithPo').textContent = data.lines_with_po || 0;
+      const elPoMeta = document.getElementById('kpiLinesWithPoMeta');
+      if (elPoMeta) elPoMeta.textContent = 'Converted to Purchase Order';
+
       document.getElementById('kpiLinesWithoutPo').textContent = data.lines_without_po || 0;
+      const elNoPoMeta = document.getElementById('kpiLinesWithoutPoMeta');
+      if (elNoPoMeta) elNoPoMeta.textContent = 'Awaiting PO Issuance';
+
       document.getElementById('kpiFullyDelivered').textContent = data.fully_delivered_lines || 0;
+      const elFullMeta = document.getElementById('kpiFullyDeliveredMeta');
+      if (elFullMeta) {
+        elFullMeta.textContent = `100% Demand (+${data.delivered_within_5pct || 0} within ±5%)`;
+      }
+
       document.getElementById('kpiPartiallyDelivered').textContent = data.partially_delivered_lines || 0;
+      const elPartMeta = document.getElementById('kpiPartiallyDeliveredMeta');
+      if (elPartMeta) {
+        elPartMeta.textContent = `>5% Shortage (${data.over_delivered_lines || 0} Over-delivered >5%)`;
+      }
+
       document.getElementById('kpiOverdueLines').textContent = data.overdue_lines || 0;
+      const elOverdueMeta = document.getElementById('kpiOverdueMeta');
+      if (elOverdueMeta) elOverdueMeta.textContent = 'Active POs Past Due Date';
     }
   } catch (err) {
     console.error('Failed to load KPIs:', err);
@@ -912,11 +931,11 @@ function getStatusBadge(status) {
   if (s.includes('reject')) {
     return `<span class="badge badge-cancelled">✕ Rejected</span>`;
   }
-  if (s.includes('pending po')) {
-    return `<span class="badge badge-open" style="background:#fffbeb; color:#b45309; border-color:#fde68a;">⏳ Pending PO</span>`;
+  if (s.includes('draft')) {
+    return `<span class="badge badge-neutral" style="background:#f1f5f9; color:#475569; border-color:#cbd5e1;">📝 Draft</span>`;
   }
-  if (s.includes('transit') || s.includes('dispatch')) {
-    return `<span class="badge badge-partial" style="background:#f0fdf4; color:#15803d; border-color:#bbf7d0;">🚚 In Transit</span>`;
+  if (s.includes('review')) {
+    return `<span class="badge badge-open" style="background:#fef3c7; color:#92400e; border-color:#fcd34d;">🔍 In Review</span>`;
   }
   if (s.includes('cancel')) {
     return `<span class="badge badge-cancelled">✕ Cancelled</span>`;

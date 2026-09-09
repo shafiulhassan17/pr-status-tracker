@@ -50,32 +50,32 @@
       <div class="kpi-card blue">
         <span class="kpi-title">Total Active PRs</span>
         <span class="kpi-value" id="kpiTotalPrs">-</span>
-        <span class="kpi-meta" id="kpiTotalLines">- Total Line Items</span>
+        <span class="kpi-meta" id="kpiTotalLines">- Active Line Items</span>
       </div>
       <div class="kpi-card purple">
         <span class="kpi-title">Lines with PO Made</span>
         <span class="kpi-value" id="kpiLinesWithPo">-</span>
-        <span class="kpi-meta">Converted to Purchase Order</span>
+        <span class="kpi-meta" id="kpiLinesWithPoMeta">Converted to Purchase Order</span>
       </div>
       <div class="kpi-card amber">
         <span class="kpi-title">Lines Pending PO</span>
         <span class="kpi-value" id="kpiLinesWithoutPo">-</span>
-        <span class="kpi-meta">Awaiting PO Issuance</span>
+        <span class="kpi-meta" id="kpiLinesWithoutPoMeta">Awaiting PO Issuance</span>
       </div>
       <div class="kpi-card green">
         <span class="kpi-title">Fully Delivered Lines</span>
         <span class="kpi-value" id="kpiFullyDelivered">-</span>
-        <span class="kpi-meta">100% Received at Warehouse</span>
+        <span class="kpi-meta" id="kpiFullyDeliveredMeta">100% Demand Received</span>
       </div>
       <div class="kpi-card purple">
         <span class="kpi-title">Partially Delivered Lines</span>
         <span class="kpi-value" id="kpiPartiallyDelivered">-</span>
-        <span class="kpi-meta">Partial GRN Received</span>
+        <span class="kpi-meta" id="kpiPartiallyDeliveredMeta">>5% Shortage</span>
       </div>
       <div class="kpi-card red">
         <span class="kpi-title">Overdue Deliveries</span>
         <span class="kpi-value" id="kpiOverdueLines">-</span>
-        <span class="kpi-meta">Past Expected Delivery Date</span>
+        <span class="kpi-meta" id="kpiOverdueMeta">Past Expected Delivery Date</span>
       </div>
     </div>
   </section>
@@ -98,13 +98,14 @@
             <option value="without_po">⏳ Pending PO Creation Only</option>
           </select>
           <select id="statusFilter" class="select-filter">
-            <option value="All">All General Statuses</option>
-            <option value="Invoiced">Invoiced</option>
+            <option value="All">All Requisitions (All Statuses)</option>
+            <option value="Active">🔥 Active PRs Only (Excl. Invoiced & Draft)</option>
+            <option value="Invoiced">✓ Invoiced (Finished / Settled)</option>
+            <option value="PreApproval">📋 Draft / In Review / Rejected</option>
             <option value="Fully Received">Fully Received</option>
             <option value="Partially Delivered">Partially Delivered</option>
             <option value="Open order">Open order</option>
             <option value="Pending PO Creation">Pending PO Creation</option>
-            <option value="PR Rejected">PR Rejected</option>
             <option value="Overdue">⚠️ Overdue Deliveries</option>
           </select>
         </div>
