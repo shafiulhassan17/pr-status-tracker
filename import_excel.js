@@ -123,9 +123,28 @@ export function runExcelImport() {
     console.log('pr_status_history column check:', e.message);
   }
 
-  // NOTE: We NEVER delete pr_status_history! It is an immutable audit log.
-  console.log('Synchronizing Excel data (preserving all user tracking statuses, remarks, and audit history)...');
+  // ---------------------------------------------------------------------------------
+  // 1. MEMORY CACHE: Load ALL existing lines & their user-edited tracking statuses
+  // ---------------------------------------------------------------------------------
+  const existingRows = db.prepare(`SELECT * FROM pr_lines`).all();
+  const existingById = new Map();
+  const existingByPoKey = new Map();
+  const existingByPrLineKey = new Map();
+  const existingByPrItemKey = new Map();
 
+  for (const row of existingRows) {
+    existingById.set(row.id, row);
+    if (row.po_number && row.po_number.trim() !== '') {
+      existingByPoKey.set(`${row.plant}___${row.pr_number}___${row.po_number}___${row.line_number}___${row.item_id}`, row);
+    }
+    existingByPrLineKey.set(`${row.plant}___${row.pr_number}___${row.line_number}___${row.item_id}`, row);
+    existingByPrItemKey.set(`${row.plant}___${row.pr_number}___${row.item_id}`, row);
+  }
+
+  console.log(`📋 Loaded ${existingRows.length} existing lines into memory.`);
+  console.log(`🔒 Preserving all user tracking statuses, remarks, assigned vendors, and audit histories!`);
+
+  // Prepared SQL Statements
   const insertLine = db.prepare(`
     INSERT INTO pr_lines (
       id, plant, pr_number, po_number, vendor_name, remarks, line_number,
@@ -138,43 +157,35 @@ export function runExcelImport() {
       ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?
     )
-    ON CONFLICT(id) DO UPDATE SET
-      po_number = excluded.po_number,
-      vendor_name = excluded.vendor_name,
-      remarks = excluded.remarks,
-      item_name = excluded.item_name,
-      unit = excluded.unit,
-      site = excluded.site,
-      warehouse = excluded.warehouse,
-      po_status = excluded.po_status,
-      purch_qty = excluded.purch_qty,
-      received_qty = excluded.received_qty,
-      dlv_remain_qty = excluded.dlv_remain_qty,
-      invoiced_qty = excluded.invoiced_qty,
-      inv_remain_qty = excluded.inv_remain_qty,
-      cancelled_qty = excluded.cancelled_qty,
-      purchase_price = excluded.purchase_price,
-      po_create_date = excluded.po_create_date,
-      expected_dlv_date = excluded.expected_dlv_date,
-      confirm_dlv_date = excluded.confirm_dlv_date,
-      last_grn_date = excluded.last_grn_date,
-      last_invoice_date = excluded.last_invoice_date,
-      tracking_status = CASE 
-        WHEN pr_lines.tracking_status IS NOT NULL AND pr_lines.tracking_status != '' AND pr_lines.tracking_status != pr_lines.po_status
-        THEN pr_lines.tracking_status
-        ELSE excluded.tracking_status
-      END,
-      status_remarks = CASE
-        WHEN pr_lines.status_remarks IS NOT NULL AND pr_lines.status_remarks != '' AND pr_lines.status_remarks NOT LIKE 'PO issued%' AND pr_lines.status_remarks NOT LIKE 'Awaiting%'
-        THEN pr_lines.status_remarks
-        ELSE excluded.status_remarks
-      END,
-      assigned_vendor = CASE
-        WHEN pr_lines.assigned_vendor IS NOT NULL AND pr_lines.assigned_vendor != ''
-        THEN pr_lines.assigned_vendor
-        ELSE excluded.assigned_vendor
-      END,
-      updated_at = datetime('now', 'localtime')
+  `);
+
+  const updateLine = db.prepare(`
+    UPDATE pr_lines
+    SET po_number = ?,
+        vendor_name = ?,
+        remarks = ?,
+        item_name = ?,
+        unit = ?,
+        site = ?,
+        warehouse = ?,
+        po_status = ?,
+        purch_qty = ?,
+        received_qty = ?,
+        dlv_remain_qty = ?,
+        invoiced_qty = ?,
+        inv_remain_qty = ?,
+        cancelled_qty = ?,
+        purchase_price = ?,
+        po_create_date = ?,
+        expected_dlv_date = ?,
+        confirm_dlv_date = ?,
+        last_grn_date = ?,
+        last_invoice_date = ?,
+        tracking_status = ?,
+        status_remarks = ?,
+        assigned_vendor = ?,
+        updated_at = datetime('now', 'localtime')
+    WHERE id = ?
   `);
 
   const insertHistory = db.prepare(`
@@ -190,16 +201,18 @@ export function runExcelImport() {
   }
 
   const plants = ['CEPL', 'SPPL'];
-  let totalPoLinesImported = 0;
-  let totalPrPendingPoImported = 0;
+  let totalPoLinesProcessed = 0;
+  let totalPrPendingPoProcessed = 0;
+  let totalPreservedUpdates = 0;
+  let totalNewLinesAdded = 0;
 
   for (const plant of plants) {
     const poFile = path.join(excelFolder, `PO_Detail_Report_${plant}.xlsx`);
     const prFile = path.join(excelFolder, `PR_Detail_Report_${plant}.xlsx`);
 
-    const existingKeys = new Set();
+    const processedKeys = new Set();
 
-    // 1. Process PO Detail Report (PR lines that have PO made)
+    // 1. Process PO Detail Report (Lines where PO is made)
     if (fs.existsSync(poFile)) {
       console.log(`\nReading PO report for ${plant}: ${path.basename(poFile)}...`);
       const wbPo = xlsx.readFile(poFile);
@@ -241,67 +254,133 @@ export function runExcelImport() {
         const lastGrnDate = excelDateToISO(r[38]);
         const lastInvoiceDate = excelDateToISO(r[39]);
 
-        const lineId = `LN-${plant}-${prNumber}-${lineNum}-${count + 1}`;
-        existingKeys.add(`${prNumber}___${itemId}`);
-        existingKeys.add(`${prNumber}___L${lineNum}`);
+        processedKeys.add(`${prNumber}___${itemId}`);
+        processedKeys.add(`${prNumber}___L${lineNum}`);
 
-        insertLine.run(
-          lineId,
-          plant,
-          prNumber,
-          poNumber,
-          vendorName,
-          remarks,
-          lineNum,
-          itemId,
-          itemName,
-          unit,
-          site,
-          warehouse,
-          poStatus,
-          poStatus, // tracking_status defaults to poStatus
-          `PO issued: ${poStatus}`, // status_remarks
-          getAssignedVendorCode(vendorName), // assigned_vendor
-          purchQty,
-          receivedQty,
-          dlvRemainQty,
-          invoicedQty,
-          invRemainQty,
-          cancelledQty,
-          purchasePrice,
-          poCreateDate,
-          expectedDlvDate,
-          confirmDlvDate,
-          lastGrnDate,
-          lastInvoiceDate
-        );
+        // Match with existing record
+        const poKey = `${plant}___${prNumber}___${poNumber}___${lineNum}___${itemId}`;
+        const prLineKey = `${plant}___${prNumber}___${lineNum}___${itemId}`;
+        const prItemKey = `${plant}___${prNumber}___${itemId}`;
 
-        // Record status evolution history entry
-        const historyId = `HST-${lineId}-1`;
-        const historyTime = poCreateDate ? `${poCreateDate} 09:00:00` : '2026-06-01 09:00:00';
-        insertHistory.run(
-          historyId,
-          plant,
-          lineId,
-          prNumber,
-          lineNum,
-          itemName,
-          null,
-          poStatus,
-          `PO ${poNumber} created with initial status: ${poStatus}`,
-          'Purchasing Officer',
-          historyTime
-        );
+        const existing = existingByPoKey.get(poKey) || existingByPrLineKey.get(prLineKey) || existingByPrItemKey.get(prItemKey);
+
+        if (existing) {
+          // Line exists! PRESERVE all user-entered statuses & remarks
+          const userStatus = (existing.tracking_status && existing.tracking_status.trim() !== '') ? existing.tracking_status : poStatus;
+          const userRemarks = (existing.status_remarks && existing.status_remarks.trim() !== '') ? existing.status_remarks : `PO issued: ${poStatus}`;
+          const userVendor = (existing.assigned_vendor && existing.assigned_vendor.trim() !== '') ? existing.assigned_vendor : getAssignedVendorCode(vendorName);
+
+          if (existing.tracking_status && existing.tracking_status !== poStatus) {
+            totalPreservedUpdates++;
+          }
+
+          // If previously had no PO and now has PO, record that event in history
+          if ((!existing.po_number || existing.po_number.trim() === '') && poNumber) {
+            const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            insertHistory.run(
+              `HST-${existing.id}-PO-${Date.now()}`,
+              plant,
+              existing.id,
+              prNumber,
+              lineNum,
+              itemName,
+              existing.tracking_status || existing.po_status,
+              userStatus,
+              `PO ${poNumber} issued in ERP`,
+              'ERP Sync',
+              nowStr
+            );
+          }
+
+          updateLine.run(
+            poNumber,
+            vendorName,
+            remarks,
+            itemName,
+            unit,
+            site,
+            warehouse,
+            poStatus,
+            purchQty,
+            receivedQty,
+            dlvRemainQty,
+            invoicedQty,
+            invRemainQty,
+            cancelledQty,
+            purchasePrice,
+            poCreateDate,
+            expectedDlvDate,
+            confirmDlvDate,
+            lastGrnDate,
+            lastInvoiceDate,
+            userStatus,
+            userRemarks,
+            userVendor,
+            existing.id
+          );
+        } else {
+          // Brand new line never seen before
+          totalNewLinesAdded++;
+          const cleanItem = itemId.replace(/[^a-zA-Z0-9_-]/g, '');
+          const lineId = `LN-${plant}-${prNumber}-${poNumber}-${lineNum}-${cleanItem || (count + 1)}`;
+          const assignedVendor = getAssignedVendorCode(vendorName);
+
+          insertLine.run(
+            lineId,
+            plant,
+            prNumber,
+            poNumber,
+            vendorName,
+            remarks,
+            lineNum,
+            itemId,
+            itemName,
+            unit,
+            site,
+            warehouse,
+            poStatus,
+            poStatus,
+            `PO issued: ${poStatus}`,
+            assignedVendor,
+            purchQty,
+            receivedQty,
+            dlvRemainQty,
+            invoicedQty,
+            invRemainQty,
+            cancelledQty,
+            purchasePrice,
+            poCreateDate,
+            expectedDlvDate,
+            confirmDlvDate,
+            lastGrnDate,
+            lastInvoiceDate
+          );
+
+          // Initial status history
+          const historyId = `HST-${lineId}-1`;
+          const historyTime = poCreateDate ? `${poCreateDate} 09:00:00` : '2026-06-01 09:00:00';
+          insertHistory.run(
+            historyId,
+            plant,
+            lineId,
+            prNumber,
+            lineNum,
+            itemName,
+            null,
+            poStatus,
+            `PO ${poNumber} created with initial status: ${poStatus}`,
+            'Purchasing Officer',
+            historyTime
+          );
+        }
 
         count++;
       }
-      totalPoLinesImported += count;
-      console.log(`  ✓ Imported ${count} PO-backed lines for ${plant}`);
-    } else {
-      console.log(`  ℹ️ No PO file found for ${plant} at ${poFile}`);
+      totalPoLinesProcessed += count;
+      console.log(`  ✓ Processed ${count} PO-backed lines for ${plant}`);
     }
 
-    // 2. Process PR Detail Report (PR lines where PO is NOT yet made)
+    // 2. Process PR Detail Report (Lines pending PO)
     if (fs.existsSync(prFile)) {
       console.log(`\nReading PR report for ${plant}: ${path.basename(prFile)}...`);
       const wbPr = xlsx.readFile(prFile);
@@ -322,7 +401,7 @@ export function runExcelImport() {
         const itemId = r[11] ? String(r[11]).trim() : 'MISC';
 
         const keyWithItem = `${prNumber}___${itemId}`;
-        if (poNumber && poNumber !== '-' && poNumber !== '0' && existingKeys.has(keyWithItem)) {
+        if (poNumber && poNumber !== '-' && poNumber !== '0' && processedKeys.has(keyWithItem)) {
           continue;
         }
 
@@ -345,61 +424,103 @@ export function runExcelImport() {
         const nextLineNum = (prLineCounters.get(prNumber) || 0) + 1;
         prLineCounters.set(prNumber, nextLineNum);
 
-        const lineId = `LN-${plant}-${prNumber}-NOPO-${nextLineNum}-${count + 1}`;
+        const prLineKey = `${plant}___${prNumber}___${nextLineNum}___${itemId}`;
+        const prItemKey = `${plant}___${prNumber}___${itemId}`;
 
-        insertLine.run(
-          lineId,
-          plant,
-          prNumber,
-          poNumber || '',
-          vendorName || '',
-          prqName,
-          nextLineNum,
-          itemId,
-          itemName,
-          unit,
-          site,
-          warehouse,
-          polStatus,
-          polStatus, // tracking_status
-          poNumber ? `PO ${poNumber}` : `Awaiting PO issuance`, // status_remarks
-          getAssignedVendorCode(vendorName), // assigned_vendor
-          poQty,
-          recQty,
-          Math.max(0, poQty - recQty),
-          0,
-          Math.max(0, poQty - 0),
-          0,
-          0,
-          poCreatedDate || '',
-          reqDate || '',
-          '',
-          lastGrn || '',
-          ''
-        );
+        const existingNoPo = existingByPrLineKey.get(prLineKey) || existingByPrItemKey.get(prItemKey);
 
-        // Status history
-        const histTime = poCreatedDate ? `${poCreatedDate} 09:00:00` : (reqDate ? `${reqDate} 09:00:00` : '2026-06-01 09:00:00');
-        insertHistory.run(
-          `HST-${lineId}-1`,
-          plant,
-          lineId,
-          prNumber,
-          nextLineNum,
-          itemName,
-          null,
-          polStatus,
-          poNumber ? `Imported from PR Report with PO ${poNumber}` : `Requisition approved, awaiting PO issuance`,
-          'Requisition Officer',
-          histTime
-        );
+        if (existingNoPo) {
+          const userStatus = (existingNoPo.tracking_status && existingNoPo.tracking_status.trim() !== '') ? existingNoPo.tracking_status : polStatus;
+          const userRemarks = (existingNoPo.status_remarks && existingNoPo.status_remarks.trim() !== '') ? existingNoPo.status_remarks : (poNumber ? `PO ${poNumber}` : `Awaiting PO issuance`);
+          const userVendor = (existingNoPo.assigned_vendor && existingNoPo.assigned_vendor.trim() !== '') ? existingNoPo.assigned_vendor : getAssignedVendorCode(vendorName);
+
+          if (existingNoPo.tracking_status && existingNoPo.tracking_status !== polStatus) {
+            totalPreservedUpdates++;
+          }
+
+          updateLine.run(
+            poNumber || '',
+            vendorName || '',
+            prqName,
+            itemName,
+            unit,
+            site,
+            warehouse,
+            polStatus,
+            poQty,
+            recQty,
+            Math.max(0, poQty - recQty),
+            0,
+            Math.max(0, poQty - 0),
+            0,
+            0,
+            poCreatedDate || '',
+            reqDate || '',
+            '',
+            lastGrn || '',
+            '',
+            userStatus,
+            userRemarks,
+            userVendor,
+            existingNoPo.id
+          );
+        } else {
+          totalNewLinesAdded++;
+          const cleanItem = itemId.replace(/[^a-zA-Z0-9_-]/g, '');
+          const lineId = `LN-${plant}-${prNumber}-NOPO-${nextLineNum}-${cleanItem || (count + 1)}`;
+          const assignedVendor = getAssignedVendorCode(vendorName);
+
+          insertLine.run(
+            lineId,
+            plant,
+            prNumber,
+            poNumber || '',
+            vendorName || '',
+            prqName,
+            nextLineNum,
+            itemId,
+            itemName,
+            unit,
+            site,
+            warehouse,
+            polStatus,
+            polStatus,
+            poNumber ? `PO ${poNumber}` : `Awaiting PO issuance`,
+            assignedVendor,
+            poQty,
+            recQty,
+            Math.max(0, poQty - recQty),
+            0,
+            Math.max(0, poQty - 0),
+            0,
+            0,
+            poCreatedDate || '',
+            reqDate || '',
+            '',
+            lastGrn || '',
+            ''
+          );
+
+          const histTime = poCreatedDate ? `${poCreatedDate} 09:00:00` : (reqDate ? `${reqDate} 09:00:00` : '2026-06-01 09:00:00');
+          insertHistory.run(
+            `HST-${lineId}-1`,
+            plant,
+            lineId,
+            prNumber,
+            nextLineNum,
+            itemName,
+            null,
+            polStatus,
+            poNumber ? `Imported from PR Report with PO ${poNumber}` : `Requisition approved, awaiting PO issuance`,
+            'Requisition Officer',
+            histTime
+          );
+        }
 
         count++;
       }
-      totalPrPendingPoImported += count;
-      console.log(`  ✓ Imported ${count} PR lines without PO / pending PO for ${plant}`);
-    } else {
-      console.log(`  ℹ️ No PR file found for ${plant} at ${prFile}`);
+      totalPrPendingPoProcessed += count;
+      console.log(`  ✓ Processed ${count} PR lines without PO / pending PO for ${plant}`);
     }
   }
 
@@ -410,11 +531,13 @@ export function runExcelImport() {
   const withoutPoCount = db.prepare(`SELECT COUNT(*) as count FROM pr_lines WHERE po_number IS NULL OR po_number = ''`).get();
 
   console.log('\n=======================================================');
-  console.log(`✅ EXCEL IMPORT FINISHED SUCCESSFULLY!`);
+  console.log(`✅ EXCEL SMART SYNC FINISHED SUCCESSFULLY!`);
   console.log(`📊 Distinct Requisitions (PRs): ${totalPrs.count}`);
-  console.log(`📋 Total Line Items:            ${totalLines.count}`);
+  console.log(`📋 Total Line Items in System:  ${totalLines.count}`);
   console.log(`   • Lines with PO Created:     ${withPoCount.count}`);
   console.log(`   • Lines Pending PO Creation: ${withoutPoCount.count}`);
+  console.log(`   • User Updates Preserved:    ${totalPreservedUpdates}`);
+  console.log(`   • New Lines Added:           ${totalNewLinesAdded}`);
   console.log('=======================================================');
 }
 
