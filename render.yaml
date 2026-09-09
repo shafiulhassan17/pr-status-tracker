@@ -1,0 +1,7 @@
+﻿services:
+  - type: web
+    name: pr-status-tracker
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
