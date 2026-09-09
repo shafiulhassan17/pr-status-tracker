@@ -123,9 +123,8 @@ export function runExcelImport() {
     console.log('pr_status_history column check:', e.message);
   }
 
-  // Clear previous data for a clean fresh sync
-  console.log('Clearing previous records for sync...');
-  db.exec(`DELETE FROM pr_status_history; DELETE FROM pr_lines;`);
+  // NOTE: We NEVER delete pr_status_history! It is an immutable audit log.
+  console.log('Synchronizing Excel data (preserving all user tracking statuses, remarks, and audit history)...');
 
   const insertLine = db.prepare(`
     INSERT INTO pr_lines (
@@ -139,10 +138,47 @@ export function runExcelImport() {
       ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?
     )
+    ON CONFLICT(id) DO UPDATE SET
+      po_number = excluded.po_number,
+      vendor_name = excluded.vendor_name,
+      remarks = excluded.remarks,
+      item_name = excluded.item_name,
+      unit = excluded.unit,
+      site = excluded.site,
+      warehouse = excluded.warehouse,
+      po_status = excluded.po_status,
+      purch_qty = excluded.purch_qty,
+      received_qty = excluded.received_qty,
+      dlv_remain_qty = excluded.dlv_remain_qty,
+      invoiced_qty = excluded.invoiced_qty,
+      inv_remain_qty = excluded.inv_remain_qty,
+      cancelled_qty = excluded.cancelled_qty,
+      purchase_price = excluded.purchase_price,
+      po_create_date = excluded.po_create_date,
+      expected_dlv_date = excluded.expected_dlv_date,
+      confirm_dlv_date = excluded.confirm_dlv_date,
+      last_grn_date = excluded.last_grn_date,
+      last_invoice_date = excluded.last_invoice_date,
+      tracking_status = CASE 
+        WHEN pr_lines.tracking_status IS NOT NULL AND pr_lines.tracking_status != '' AND pr_lines.tracking_status != pr_lines.po_status
+        THEN pr_lines.tracking_status
+        ELSE excluded.tracking_status
+      END,
+      status_remarks = CASE
+        WHEN pr_lines.status_remarks IS NOT NULL AND pr_lines.status_remarks != '' AND pr_lines.status_remarks NOT LIKE 'PO issued%' AND pr_lines.status_remarks NOT LIKE 'Awaiting%'
+        THEN pr_lines.status_remarks
+        ELSE excluded.status_remarks
+      END,
+      assigned_vendor = CASE
+        WHEN pr_lines.assigned_vendor IS NOT NULL AND pr_lines.assigned_vendor != ''
+        THEN pr_lines.assigned_vendor
+        ELSE excluded.assigned_vendor
+      END,
+      updated_at = datetime('now', 'localtime')
   `);
 
   const insertHistory = db.prepare(`
-    INSERT INTO pr_status_history (
+    INSERT OR IGNORE INTO pr_status_history (
       id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);

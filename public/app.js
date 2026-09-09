@@ -61,8 +61,25 @@ function setupEventListeners() {
   statusFilter.addEventListener('change', loadPrOverview);
   poStateFilter.addEventListener('change', loadPrOverview);
 
-  // Reload Excel Button
-  document.getElementById('btnReloadExcel').addEventListener('click', handleReloadExcel);
+  // Safe Refresh View Button
+  const btnRefresh = document.getElementById('btnRefreshView');
+  if (btnRefresh) {
+    btnRefresh.addEventListener('click', () => {
+      showToast('Refreshing view...', 'info');
+      loadKpis();
+      if (currentView === 'detail' && selectedPrNumber) {
+        loadPrDetails(selectedPrNumber);
+      } else {
+        loadPrOverview();
+      }
+    });
+  }
+
+  // Sync Excel Button (with confirmation)
+  const btnSync = document.getElementById('btnSyncExcel');
+  if (btnSync) {
+    btnSync.addEventListener('click', handleSyncExcel);
+  }
 
   // Back button in detail view
   document.getElementById('btnBackToOverview').addEventListener('click', () => {
@@ -246,27 +263,31 @@ async function loadPrDetails(prNumber) {
   }
 }
 
-async function handleReloadExcel() {
-  const btn = document.getElementById('btnReloadExcel');
+async function handleSyncExcel() {
+  if (!confirm('Sync latest ERP data from Excel files?\n\n(All your custom tracking statuses, remarks, and assigned vendors will be safely preserved).')) {
+    return;
+  }
+
+  const btn = document.getElementById('btnSyncExcel');
   const originalText = btn.textContent;
-  btn.textContent = '⏳ Reloading...';
+  btn.textContent = '⏳ Syncing...';
   btn.disabled = true;
 
   try {
     const res = await fetch('/api/excel/re-import', { method: 'POST' });
     const data = await res.json();
     if (data.success) {
-      showToast('✓ Excel reports re-synchronized successfully!', 'success');
+      showToast('✓ Excel files synced! Your tracking statuses & remarks are preserved.', 'success');
       loadKpis();
       loadPrOverview();
       if (currentView === 'detail' && selectedPrNumber) {
         loadPrDetails(selectedPrNumber);
       }
     } else {
-      showToast(data.error || 'Failed to reload Excel', 'error');
+      showToast(data.error || 'Failed to sync Excel', 'error');
     }
   } catch (err) {
-    showToast('Error connecting to server for Excel reload', 'error');
+    showToast('Error connecting to server for Excel sync', 'error');
   } finally {
     btn.textContent = originalText;
     btn.disabled = false;
