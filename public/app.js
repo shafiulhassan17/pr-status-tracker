@@ -20,12 +20,21 @@ const columnVisibility = {
 // DOM Elements
 const viewPrOverview = document.getElementById('viewPrOverview');
 const viewPrDetail = document.getElementById('viewPrDetail');
+const viewVendorDashboard = document.getElementById('viewVendorDashboard');
 const prTableBody = document.getElementById('prTableBody');
 const prDetailTableBody = document.getElementById('prDetailTableBody');
 const searchInput = document.getElementById('searchInput');
 const statusFilter = document.getElementById('statusFilter');
 const poStateFilter = document.getElementById('poStateFilter');
+const vendorGroupFilter = document.getElementById('vendorGroupFilter');
 const prDisplayCount = document.getElementById('prDisplayCount');
+const btnNavOverview = document.getElementById('btnNavOverview');
+const btnNavVendorDashboard = document.getElementById('btnNavVendorDashboard');
+const btnManualUpdatedPrs = document.getElementById('btnManualUpdatedPrs');
+const manualPrBadge = document.getElementById('manualPrBadge');
+const vendorMatrixGrid = document.getElementById('vendorMatrixGrid');
+const btnVendorMatrixManualOnly = document.getElementById('btnVendorMatrixManualOnly');
+const btnBackToOverviewFromMatrix = document.getElementById('btnBackToOverviewFromMatrix');
 
 // Detail Page Elements
 const detailPrBreadcrumb = document.getElementById('detailPrBreadcrumb');
@@ -45,6 +54,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Setup event listeners
 function setupEventListeners() {
+  // Navigation Tabs Switcher
+  if (btnNavOverview) btnNavOverview.addEventListener('click', navigateToOverview);
+  if (btnNavVendorDashboard) btnNavVendorDashboard.addEventListener('click', navigateToVendorDashboard);
+  if (btnManualUpdatedPrs) btnManualUpdatedPrs.addEventListener('click', filterByManualUpdates);
+  if (btnVendorMatrixManualOnly) btnVendorMatrixManualOnly.addEventListener('click', filterByManualUpdates);
+  if (btnBackToOverviewFromMatrix) btnBackToOverviewFromMatrix.addEventListener('click', navigateToOverview);
+
   // Plant Selector Tabs
   document.querySelectorAll('.plant-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -52,7 +68,13 @@ function setupEventListeners() {
       tab.classList.add('active');
       selectedPlant = tab.dataset.plant;
       loadKpis();
-      loadPrOverview();
+      if (currentView === 'vendor_dashboard') {
+        loadVendorDashboard();
+      } else if (currentView === 'detail' && selectedPrNumber) {
+        loadPrDetails(selectedPrNumber);
+      } else {
+        loadPrOverview();
+      }
     });
   });
 
@@ -60,6 +82,7 @@ function setupEventListeners() {
   searchInput.addEventListener('input', debounce(loadPrOverview, 250));
   statusFilter.addEventListener('change', loadPrOverview);
   poStateFilter.addEventListener('change', loadPrOverview);
+  if (vendorGroupFilter) vendorGroupFilter.addEventListener('change', loadPrOverview);
 
   // Safe Refresh View Button
   const btnRefresh = document.getElementById('btnRefreshView');
@@ -67,7 +90,9 @@ function setupEventListeners() {
     btnRefresh.addEventListener('click', () => {
       showToast('Refreshing view...', 'info');
       loadKpis();
-      if (currentView === 'detail' && selectedPrNumber) {
+      if (currentView === 'vendor_dashboard') {
+        loadVendorDashboard();
+      } else if (currentView === 'detail' && selectedPrNumber) {
         loadPrDetails(selectedPrNumber);
       } else {
         loadPrOverview();
@@ -166,12 +191,19 @@ function applyColumnVisibility() {
 // Navigation & Routing
 // ----------------------------------------------------
 
+function updateNavTabs() {
+  if (btnNavOverview) btnNavOverview.classList.toggle('active', currentView === 'overview');
+  if (btnNavVendorDashboard) btnNavVendorDashboard.classList.toggle('active', currentView === 'vendor_dashboard');
+}
+
 function navigateToOverview() {
   currentView = 'overview';
   selectedPrNumber = null;
   clearBulkSelection();
   viewPrOverview.style.display = 'block';
   viewPrDetail.style.display = 'none';
+  if (viewVendorDashboard) viewVendorDashboard.style.display = 'none';
+  updateNavTabs();
   loadKpis();
   loadPrOverview();
 }
@@ -182,7 +214,33 @@ function navigateToDetail(prNumber) {
   clearBulkSelection();
   viewPrOverview.style.display = 'none';
   viewPrDetail.style.display = 'block';
+  if (viewVendorDashboard) viewVendorDashboard.style.display = 'none';
+  updateNavTabs();
   loadPrDetails(prNumber);
+}
+
+function navigateToVendorDashboard() {
+  currentView = 'vendor_dashboard';
+  selectedPrNumber = null;
+  clearBulkSelection();
+  viewPrOverview.style.display = 'none';
+  viewPrDetail.style.display = 'none';
+  if (viewVendorDashboard) viewVendorDashboard.style.display = 'block';
+  updateNavTabs();
+  loadKpis();
+  loadVendorDashboard();
+}
+
+function filterByManualUpdates() {
+  if (statusFilter) statusFilter.value = 'ManualUpdates';
+  if (vendorGroupFilter) vendorGroupFilter.value = 'All';
+  navigateToOverview();
+}
+
+function filterByVendorGroup(vendorCode) {
+  if (vendorGroupFilter) vendorGroupFilter.value = vendorCode;
+  if (statusFilter) statusFilter.value = 'All';
+  navigateToOverview();
 }
 
 // ----------------------------------------------------
@@ -223,6 +281,10 @@ async function loadKpis() {
       document.getElementById('kpiOverdueLines').textContent = data.overdue_lines || 0;
       const elOverdueMeta = document.getElementById('kpiOverdueMeta');
       if (elOverdueMeta) elOverdueMeta.textContent = 'Active POs Past Due Date';
+
+      if (manualPrBadge) {
+        manualPrBadge.textContent = data.total_manual_prs || 0;
+      }
     }
   } catch (err) {
     console.error('Failed to load KPIs:', err);
@@ -234,12 +296,14 @@ async function loadPrOverview() {
     const q = searchInput.value.trim();
     const status = statusFilter.value;
     const poFilter = poStateFilter.value;
+    const vendorGroup = vendorGroupFilter ? vendorGroupFilter.value : 'All';
 
     const params = new URLSearchParams();
     if (q) params.append('search', q);
     if (status && status !== 'All') params.append('status', status);
     if (selectedPlant && selectedPlant !== 'All') params.append('plant', selectedPlant);
     if (poFilter && poFilter !== 'All') params.append('po_filter', poFilter);
+    if (vendorGroup && vendorGroup !== 'All') params.append('vendor_group', vendorGroup);
 
     const res = await fetch(`/api/prs?${params.toString()}`);
     const data = await res.json();
@@ -298,9 +362,12 @@ async function handleSyncExcel() {
     if (data.success) {
       showToast('✓ Excel files synced! Your tracking statuses & remarks are preserved.', 'success');
       loadKpis();
-      loadPrOverview();
-      if (currentView === 'detail' && selectedPrNumber) {
+      if (currentView === 'vendor_dashboard') {
+        loadVendorDashboard();
+      } else if (currentView === 'detail' && selectedPrNumber) {
         loadPrDetails(selectedPrNumber);
+      } else {
+        loadPrOverview();
       }
     } else {
       showToast(data.error || 'Failed to sync Excel', 'error');
@@ -346,13 +413,25 @@ function renderPrOverview(prs) {
 
     const plantBadge = `<span class="badge ${pr.plant === 'SPPL' ? 'badge-partial' : 'badge-neutral'}" style="font-weight: 700;">${pr.plant}</span>`;
 
+    const manualBadge = pr.has_manual_updates
+      ? `<span class="badge-manual" title="Has manual status, remarks, or purchaser updates">✍️ Manual</span>`
+      : '';
+
+    const purchaserBadge = pr.primary_vendor_group && !['OTHER_VENDORS', 'UNASSIGNED'].includes(pr.primary_vendor_group)
+      ? `<span style="font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;" title="Assigned Purchaser: ${escapeHtml(pr.primary_vendor_group)}">${escapeHtml(pr.primary_vendor_group)}</span>`
+      : '';
+
     html += `
       <tr>
         <td style="text-align: center;">${plantBadge}</td>
         <td class="sticky-col">
-          <a href="javascript:void(0)" onclick="navigateToDetail('${escapeHtml(pr.pr_number)}')" style="font-weight: 700; color: #2563eb; text-decoration: none; font-size: 14px;">
-            ${escapeHtml(pr.pr_number)}
-          </a>
+          <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+            <a href="javascript:void(0)" onclick="navigateToDetail('${escapeHtml(pr.pr_number)}')" style="font-weight: 700; color: #2563eb; text-decoration: none; font-size: 14px;">
+              ${escapeHtml(pr.pr_number)}
+            </a>
+            ${purchaserBadge}
+            ${manualBadge}
+          </div>
         </td>
         <td>${poDisplay}</td>
         <td style="color: #475569; max-width: 320px; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(pr.remarks || '')}">
@@ -396,6 +475,142 @@ function renderPrOverview(prs) {
   }
 
   prTableBody.innerHTML = html;
+}
+
+// ----------------------------------------------------
+// Vendor Matrix Dashboard View
+// ----------------------------------------------------
+
+async function loadVendorDashboard() {
+  if (!vendorMatrixGrid) return;
+
+  vendorMatrixGrid.innerHTML = `
+    <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--slate-400);">
+      ⏳ Loading Vendor Matrix...
+    </div>
+  `;
+
+  try {
+    const params = new URLSearchParams();
+    if (selectedPlant && selectedPlant !== 'All') params.append('plant', selectedPlant);
+
+    const res = await fetch(`/api/dashboard/vendor-matrix?${params.toString()}`);
+    const data = await res.json();
+
+    if (!data.success) {
+      vendorMatrixGrid.innerHTML = `
+        <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: #ef4444;">
+          ⚠️ Failed to load Vendor Matrix: ${escapeHtml(data.error || 'Unknown error')}
+        </div>
+      `;
+      return;
+    }
+
+    if (manualPrBadge) {
+      manualPrBadge.textContent = data.total_manual_prs || 0;
+    }
+
+    const groups = data.vendor_groups || [];
+    if (groups.length === 0) {
+      vendorMatrixGrid.innerHTML = `
+        <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--slate-400);">
+          No vendor data available.
+        </div>
+      `;
+      return;
+    }
+
+    let html = '';
+    for (const g of groups) {
+      const isExternal = g.code === 'OTHER_VENDORS';
+      const isUnassigned = g.code === 'UNASSIGNED';
+      const avatarText = isExternal ? '🏢' : isUnassigned ? '⏳' : g.code;
+      const progressColor = g.completion_pct === 100 ? '#16a34a' : g.completion_pct > 0 ? '#2563eb' : '#f59e0b';
+
+      const overdueBadge = g.overdue_lines > 0
+        ? `<span class="badge badge-cancelled" style="font-size: 10px; margin-left: 4px;">⚠️ ${g.overdue_lines} Overdue</span>`
+        : '';
+
+      html += `
+        <div class="vendor-card">
+          <div>
+            <!-- Card Header -->
+            <div class="vendor-card-header">
+              <div class="vendor-card-avatar" style="background: ${g.bg}; color: ${g.color}; border: 1px solid ${g.color}33;">
+                ${avatarText}
+              </div>
+              <div class="vendor-card-identity">
+                <div class="vendor-card-name">${escapeHtml(g.name)}</div>
+                <div class="vendor-card-role" style="color: ${g.color}; font-weight: 700;">
+                  ${escapeHtml(g.role)} • <span style="letter-spacing: 0;">Code: <strong>${escapeHtml(g.code)}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Company Breakdown (CEPL vs SPPL) -->
+            <div class="vendor-company-breakdown">
+              <span class="vendor-company-pill" title="Requisitions in CEPL">🏭 CEPL: <strong>${g.cepl_prs}</strong> PRs</span>
+              <span class="vendor-company-pill" title="Requisitions in SPPL">🏭 SPPL: <strong>${g.sppl_prs}</strong> PRs</span>
+              <span style="margin-left: auto; font-size: 11px; font-weight: 700; color: #16a34a;">
+                ${g.active_prs} Active
+              </span>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="vendor-card-stats">
+              <div>
+                <div class="vendor-stat-num">${g.total_prs}</div>
+                <div class="vendor-stat-label">Total PRs</div>
+              </div>
+              <div>
+                <div class="vendor-stat-num" style="color: #2563eb;">${g.total_lines}</div>
+                <div class="vendor-stat-label">Lines</div>
+              </div>
+              <div>
+                <div class="vendor-stat-num" style="color: #16a34a;">${g.fully_delivered_lines}</div>
+                <div class="vendor-stat-label">Delivered</div>
+              </div>
+            </div>
+
+            <!-- Line status breakdown details -->
+            <div style="font-size: 11px; color: var(--slate-600); margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between;">
+              <span>⚡ Partial: <strong>${g.partially_delivered_lines}</strong></span>
+              <span>⏳ Pending: <strong>${g.pending_lines}</strong></span>
+              ${overdueBadge ? `<span>${overdueBadge}</span>` : ''}
+            </div>
+
+            <!-- Delivery Progress Bar -->
+            <div class="vendor-card-progress">
+              <div class="vendor-progress-label">
+                <span>Line Delivery Rate</span>
+                <span>${g.completion_pct}%</span>
+              </div>
+              <div class="vendor-progress-track">
+                <div class="vendor-progress-fill" style="width: ${g.completion_pct}%; background: ${progressColor};"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card Footer Action -->
+          <div class="vendor-card-footer">
+            <button type="button" class="vendor-card-btn" onclick="filterByVendorGroup('${escapeHtml(g.code)}')">
+              <span>View Requisitions (${g.total_prs})</span>
+              <span>➔</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    vendorMatrixGrid.innerHTML = html;
+  } catch (err) {
+    console.error('Error loading vendor dashboard:', err);
+    vendorMatrixGrid.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: #ef4444;">
+        ⚠️ Network error loading Vendor Matrix.
+      </div>
+    `;
+  }
 }
 
 function renderPrLines(lines) {

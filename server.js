@@ -167,13 +167,69 @@ function computeGeneralPrStatus(lines) {
 }
 
 // ----------------------------------------------------
+// Vendor Matrix Helpers & Manual Tracking Detection
+// ----------------------------------------------------
+const PURCHASER_META = {
+  SAR: { code: 'SAR', name: 'Sarfraz Ahmad', role: 'Purchaser', color: '#2563eb', bg: '#eff6ff' },
+  MAG: { code: 'MAG', name: 'Maghfoor Ahmad', role: 'Purchaser', color: '#7c3aed', bg: '#f5f3ff' },
+  NOU: { code: 'NOU', name: 'Nouman Khan', role: 'Purchaser', color: '#059669', bg: '#ecfdf5' },
+  ADI: { code: 'ADI', name: 'Adil Mahmood', role: 'Purchaser', color: '#0284c7', bg: '#f0f9ff' },
+  MUD: { code: 'MUD', name: 'Mudassir Ghauri', role: 'Purchaser', color: '#d97706', bg: '#fffbeb' },
+  TAL: { code: 'TAL', name: 'Talha Baig', role: 'Purchaser', color: '#4f46e5', bg: '#eef2ff' },
+  MAS: { code: 'MAS', name: 'Mashhood', role: 'Purchaser', color: '#db2777', bg: '#fdf2f8' },
+  ZAI: { code: 'ZAI', name: 'Muhammad Zain', role: 'Purchaser', color: '#0891b2', bg: '#ecfeff' },
+  OTHER_VENDORS: { code: 'OTHER_VENDORS', name: 'Other / External Vendors', role: 'External Suppliers', color: '#475569', bg: '#f8fafc' },
+  UNASSIGNED: { code: 'UNASSIGNED', name: 'Unassigned / Pending PO', role: 'Unassigned', color: '#dc2626', bg: '#fef2f2' }
+};
+
+const PURCHASER_CODES = ['SAR', 'MAG', 'NOU', 'ADI', 'MUD', 'TAL', 'MAS', 'ZAI'];
+
+function getLineVendorGroup(l) {
+  if (l.assigned_vendor && PURCHASER_CODES.includes(l.assigned_vendor.toUpperCase())) {
+    return l.assigned_vendor.toUpperCase();
+  }
+  const v = (l.vendor_name || '').toUpperCase().replace(/[^A-Z]/g, '');
+  if (v.includes('SARFRAZ')) return 'SAR';
+  if (v.includes('MAGHFOOR') || v.includes('MAGFOOR')) return 'MAG';
+  if (v.includes('NOUMAN') || v.includes('NUMAN')) return 'NOU';
+  if (v.includes('ADIL')) return 'ADI';
+  if (v.includes('MUDASS') || v.includes('MUDASSER') || v.includes('MUDASIR') || v.includes('MUDASER')) return 'MUD';
+  if (v.includes('TALHA')) return 'TAL';
+  if (v.includes('MASHHOOD') || v.includes('MASHOOD') || v.includes('MASHUD')) return 'MAS';
+  if (v.includes('ZAIN')) return 'ZAI';
+  if (l.po_number && l.po_number.trim() !== '') return 'OTHER_VENDORS';
+  return 'UNASSIGNED';
+}
+
+function getManuallyUpdatedPrNumbers() {
+  const histPrs = db.prepare(`
+    SELECT DISTINCT pr_number 
+    FROM pr_status_history 
+    WHERE (id NOT GLOB '*-1' AND id NOT LIKE '%-PO-%')
+       OR (changed_by NOT IN ('Purchasing Officer', 'Requisition Officer', 'ERP Sync') AND reason_notes NOT LIKE 'Imported from%')
+  `).all().map(r => r.pr_number);
+
+  const linePrs = db.prepare(`
+    SELECT DISTINCT pr_number 
+    FROM pr_lines 
+    WHERE (tracking_status IS NOT NULL AND tracking_status != '' AND tracking_status != po_status)
+       OR (status_remarks IS NOT NULL AND status_remarks != '' 
+           AND status_remarks NOT LIKE 'PO issued%' 
+           AND status_remarks NOT LIKE 'Awaiting PO%' 
+           AND status_remarks NOT LIKE 'PO %')
+  `).all().map(r => r.pr_number);
+
+  return new Set([...histPrs, ...linePrs]);
+}
+
+// ----------------------------------------------------
 // REST API ENDPOINTS
 // ----------------------------------------------------
 
 // 1. GET /api/prs - Consolidated PR Level List (Each PR listed exactly once, NO vendor name on main page!)
 app.get('/api/prs', (req, res) => {
   try {
-    const { search, status, plant, po_filter } = req.query;
+    const { search, status, plant, po_filter, manual_only, vendor_group } = req.query;
 
     let query = `SELECT * FROM pr_lines WHERE 1=1`;
     const queryParams = [];
@@ -192,6 +248,7 @@ app.get('/api/prs', (req, res) => {
     query += ` ORDER BY pr_number ASC, line_number ASC`;
 
     const allLines = db.prepare(query).all(...queryParams);
+    const manualPrSet = getManuallyUpdatedPrNumbers();
 
     // Group lines by PR Number
     const prGroups = new Map();
@@ -251,6 +308,9 @@ app.get('/api/prs', (req, res) => {
       const isPreApprovalOrCancelled = ['PR Draft', 'PR In Review', 'PR Rejected', 'PR Cancelled', 'Cancelled'].includes(generalStatus);
       const isActive = !isInvoiced && !isPreApprovalOrCancelled;
 
+      const hasManualUpdates = manualPrSet.has(prNumber);
+      const vendorGroups = Array.from(new Set(lines.map(getLineVendorGroup)));
+
       const summary = {
         pr_number: prNumber,
         plant: plants[0] || 'CEPL',
@@ -261,6 +321,9 @@ app.get('/api/prs', (req, res) => {
         is_active: isActive,
         is_invoiced: isInvoiced,
         is_pre_approval: isPreApprovalOrCancelled,
+        has_manual_updates: hasManualUpdates,
+        vendor_groups: vendorGroups,
+        primary_vendor_group: vendorGroups[0] || 'UNASSIGNED',
         total_lines: totalLines,
         lines_with_po: linesWithPo,
         lines_without_po: linesWithoutPo,
@@ -276,6 +339,14 @@ app.get('/api/prs', (req, res) => {
       };
 
       // Apply query filters
+      if (manual_only === 'true' || status === 'ManualUpdates') {
+        if (!summary.has_manual_updates) continue;
+      }
+
+      if (vendor_group && vendor_group !== 'All') {
+        if (!summary.vendor_groups.includes(vendor_group)) continue;
+      }
+
       if (search) {
         const q = search.toLowerCase();
         const matches =
@@ -287,7 +358,9 @@ app.get('/api/prs', (req, res) => {
       }
 
       if (status && status !== 'All') {
-        if (status === 'Active') {
+        if (status === 'ManualUpdates') {
+          if (!summary.has_manual_updates) continue;
+        } else if (status === 'Active') {
           if (!summary.is_active) continue;
         } else if (status === 'Invoiced') {
           if (!summary.is_invoiced) continue;
@@ -705,10 +778,129 @@ app.get('/api/kpis', (req, res) => {
       overdue_lines: overdueCount,
       invoiced_prs_count: invoicedPrs.size,
       pre_approval_prs_count: preApprovalPrs.size,
+      total_manual_prs: getManuallyUpdatedPrNumbers().size,
       total_all_prs: prGroups.size,
       total_all_lines: allLines.length
     });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6b. GET /api/dashboard/vendor-matrix - Vendor & Company Grouped Dashboard Matrix
+app.get('/api/dashboard/vendor-matrix', (req, res) => {
+  try {
+    const { plant } = req.query;
+    let query = `SELECT * FROM pr_lines`;
+    const params = [];
+    if (plant && plant !== 'All') {
+      query += ` WHERE plant = ?`;
+      params.push(plant);
+    }
+
+    const allLines = db.prepare(query).all(...params);
+
+    // Group lines by PR
+    const prGroups = new Map();
+    for (const l of allLines) {
+      if (!prGroups.has(l.pr_number)) {
+        prGroups.set(l.pr_number, {
+          pr_number: l.pr_number,
+          plant: l.plant,
+          lines: []
+        });
+      }
+      prGroups.get(l.pr_number).lines.push(l);
+    }
+
+    const groupOrder = ['SAR', 'MAG', 'NOU', 'ADI', 'MUD', 'TAL', 'MAS', 'ZAI', 'OTHER_VENDORS', 'UNASSIGNED'];
+    const matrix = {};
+    for (const code of groupOrder) {
+      matrix[code] = {
+        ...PURCHASER_META[code],
+        total_prs: new Set(),
+        active_prs: new Set(),
+        cepl_prs: new Set(),
+        sppl_prs: new Set(),
+        total_lines: 0,
+        active_lines: 0,
+        fully_delivered_lines: 0,
+        partially_delivered_lines: 0,
+        pending_lines: 0,
+        overdue_lines: 0,
+        pr_numbers: new Set()
+      };
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    for (const [prNum, p] of prGroups.entries()) {
+      const prLines = p.lines;
+      const generalStatus = computeGeneralPrStatus(prLines);
+      const isInvoiced = generalStatus === 'Invoiced';
+      const isPreApprovalOrCancelled = ['PR Draft', 'PR In Review', 'PR Rejected', 'PR Cancelled', 'Cancelled'].includes(generalStatus);
+      const isActivePr = !isInvoiced && !isPreApprovalOrCancelled;
+
+      for (const l of prLines) {
+        const grp = getLineVendorGroup(l);
+        const m = matrix[grp];
+        m.total_prs.add(prNum);
+        m.pr_numbers.add(prNum);
+        if (isActivePr) m.active_prs.add(prNum);
+        if (l.plant === 'CEPL') m.cepl_prs.add(prNum);
+        else if (l.plant === 'SPPL') m.sppl_prs.add(prNum);
+
+        m.total_lines++;
+        if (isActivePr) m.active_lines++;
+
+        const pQty = Number(l.purch_qty) || 0;
+        const rQty = Number(l.received_qty) || 0;
+        const status = (l.tracking_status || l.po_status || '').toLowerCase();
+
+        if (pQty > 0 && rQty >= pQty) m.fully_delivered_lines++;
+        else if (rQty > 0 && rQty < pQty) m.partially_delivered_lines++;
+        else m.pending_lines++;
+
+        if (l.expected_dlv_date && l.expected_dlv_date < today && rQty < pQty && !status.includes('cancelled')) {
+          m.overdue_lines++;
+        }
+      }
+    }
+
+    const vendorGroups = groupOrder.map(code => {
+      const m = matrix[code];
+      const tLines = m.total_lines;
+      return {
+        code: m.code,
+        name: m.name,
+        role: m.role,
+        color: m.color,
+        bg: m.bg,
+        total_prs: m.total_prs.size,
+        active_prs: m.active_prs.size,
+        cepl_prs: m.cepl_prs.size,
+        sppl_prs: m.sppl_prs.size,
+        total_lines: m.total_lines,
+        active_lines: m.active_lines,
+        fully_delivered_lines: m.fully_delivered_lines,
+        partially_delivered_lines: m.partially_delivered_lines,
+        pending_lines: m.pending_lines,
+        overdue_lines: m.overdue_lines,
+        completion_pct: tLines > 0 ? Math.round((m.fully_delivered_lines / tLines) * 100) : 0,
+        pr_numbers: Array.from(m.pr_numbers)
+      };
+    });
+
+    const manualPrSet = getManuallyUpdatedPrNumbers();
+
+    res.json({
+      success: true,
+      plant: plant || 'All',
+      total_manual_prs: manualPrSet.size,
+      vendor_groups: vendorGroups
+    });
+  } catch (err) {
+    console.error('Error in GET /api/dashboard/vendor-matrix:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

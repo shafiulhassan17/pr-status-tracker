@@ -932,3 +932,221 @@ tr.selected-row td {
   border-color: #cbd5e1;
 }
 
+/* View Navigation Switcher */
+.view-nav-tabs {
+  display: inline-flex;
+  align-items: center;
+  background-color: #f1f5f9;
+  border: 1px solid var(--slate-300);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.view-nav-btn {
+  background: transparent;
+  border: none;
+  color: var(--slate-600);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.view-nav-btn:hover {
+  color: var(--slate-900);
+  background-color: rgba(255, 255, 255, 0.6);
+}
+
+.view-nav-btn.active {
+  background-color: #ffffff;
+  color: #1e40af;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Manually Updated Badge */
+.badge-manual {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+
+/* Vendor & Company Matrix Grid */
+.vendor-matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 20px;
+}
+
+.vendor-card {
+  background-color: #ffffff;
+  border: 1px solid var(--slate-200);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.vendor-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px -4px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  border-color: #93c5fd;
+}
+
+.vendor-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.vendor-card-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.vendor-card-identity {
+  flex: 1;
+}
+
+.vendor-card-name {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--slate-900);
+  line-height: 1.2;
+}
+
+.vendor-card-role {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--slate-500);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.vendor-card-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  background-color: #f8fafc;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--slate-100);
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+.vendor-stat-num {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--slate-900);
+}
+
+.vendor-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--slate-500);
+  text-transform: uppercase;
+}
+
+.vendor-company-breakdown {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 11px;
+}
+
+.vendor-company-pill {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  background-color: #f1f5f9;
+  color: var(--slate-700);
+  border: 1px solid var(--slate-200);
+}
+
+.vendor-card-progress {
+  margin-bottom: 14px;
+}
+
+.vendor-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--slate-600);
+  margin-bottom: 4px;
+}
+
+.vendor-progress-track {
+  height: 7px;
+  background-color: var(--slate-200);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.vendor-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.vendor-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--slate-100);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.vendor-card-btn {
+  width: 100%;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #1e40af;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.vendor-card-btn:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+

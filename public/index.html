@@ -21,6 +21,21 @@
       </div>
 
       <div class="header-actions">
+        <!-- View Navigation Switcher -->
+        <div class="view-nav-tabs">
+          <button class="view-nav-btn active" id="btnNavOverview" title="View Requisitions Overview Table">
+            📋 Overview
+          </button>
+          <button class="view-nav-btn" id="btnNavVendorDashboard" title="View Vendor & Company Matrix Dashboard">
+            📊 Vendor Matrix
+          </button>
+        </div>
+
+        <!-- Manually Updated Quick Button -->
+        <button class="btn btn-secondary btn-sm" id="btnManualUpdatedPrs" title="Filter to PRs with manual status/remarks updates">
+          ✍️ Manually Updated <span id="manualPrBadge" style="background:#2563eb; color:#fff; padding:2px 7px; border-radius:10px; font-size:11px; font-weight:700; margin-left:3px;">0</span>
+        </button>
+
         <!-- Plant Selector -->
         <div style="display: flex; align-items: center; background: #f1f5f9; padding: 3px; border-radius: 8px; border: 1px solid var(--slate-300);">
           <button class="plant-tab active" data-plant="All" id="tabPlantAll">All Plants</button>
@@ -45,7 +60,7 @@
   </header>
 
   <!-- KPI Summary Banner -->
-  <section class="kpi-section">
+  <section class="kpi-section" id="kpiBannerSection">
     <div class="kpi-grid">
       <div class="kpi-card blue">
         <span class="kpi-title">Total Active PRs</span>
@@ -97,9 +112,23 @@
             <option value="with_po">✓ With PO Created Only</option>
             <option value="without_po">⏳ Pending PO Creation Only</option>
           </select>
+          <select id="vendorGroupFilter" class="select-filter">
+            <option value="All">All Vendors & Purchasers</option>
+            <option value="SAR">SAR (Sarfraz Ahmad)</option>
+            <option value="MAG">MAG (Maghfoor Ahmad)</option>
+            <option value="NOU">NOU (Nouman Khan)</option>
+            <option value="ADI">ADI (Adil Mahmood)</option>
+            <option value="MUD">MUD (Mudassir Ghauri)</option>
+            <option value="TAL">TAL (Talha Baig)</option>
+            <option value="MAS">MAS (Mashhood)</option>
+            <option value="ZAI">ZAI (Muhammad Zain)</option>
+            <option value="OTHER_VENDORS">🏢 Other / External Vendors</option>
+            <option value="UNASSIGNED">⏳ Unassigned / Pending PO</option>
+          </select>
           <select id="statusFilter" class="select-filter">
             <option value="All">All Requisitions (All Statuses)</option>
             <option value="Active">🔥 Active PRs Only (Excl. Invoiced & Draft)</option>
+            <option value="ManualUpdates">✍️ Manually Updated PRs Only</option>
             <option value="Invoiced">✓ Invoiced (Finished / Settled)</option>
             <option value="PreApproval">📋 Draft / In Review / Rejected</option>
             <option value="Fully Received">Fully Received</option>
@@ -267,6 +296,37 @@
         <button type="button" class="bulk-btn-clear" id="btnClearBulkSelection">
           ✕ Clear Selection
         </button>
+      </div>
+    </div>
+
+    <!-- VIEW 3: VENDOR & COMPANY MATRIX DASHBOARD -->
+    <div id="viewVendorDashboard" class="content-card" style="display: none;">
+      <!-- Dashboard Top Strip -->
+      <div style="padding: 16px 22px; background: #ffffff; border-bottom: 1px solid var(--slate-200); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px;">
+        <div>
+          <h2 style="font-size: 18px; font-weight: 800; color: var(--slate-900); margin: 0; display: flex; align-items: center; gap: 8px;">
+            <span>📊</span> Vendor & Company Procurement Matrix
+          </h2>
+          <div style="font-size: 13px; color: var(--slate-500); margin-top: 2px;">
+            Requisitions categorized by assigned purchasers, external vendor POs, and companies (CEPL & SPPL)
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <button class="btn btn-secondary btn-sm" id="btnVendorMatrixManualOnly">
+            ✍️ View Manually Updated PRs
+          </button>
+          <button class="btn btn-primary btn-sm" id="btnBackToOverviewFromMatrix">
+            ← Back to Requisitions Overview
+          </button>
+        </div>
+      </div>
+
+      <!-- Vendor Cards Grid -->
+      <div style="padding: 22px;">
+        <div class="vendor-matrix-grid" id="vendorMatrixGrid">
+          <!-- Dynamically populated by app.js -->
+        </div>
       </div>
     </div>
 

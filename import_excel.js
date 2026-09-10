@@ -90,17 +90,17 @@ export function runExcelImport() {
     );
   `);
 
-  // Helper to auto-match assigned vendor code
+  // Helper to auto-match assigned vendor code from vendor name
   function getAssignedVendorCode(name) {
     if (!name) return '';
-    const v = name.toUpperCase();
+    const v = name.toUpperCase().replace(/[^A-Z]/g, '');
     if (v.includes('SARFRAZ')) return 'SAR';
-    if (v.includes('MAGHFOOR')) return 'MAG';
-    if (v.includes('NOUMAN')) return 'NOU';
+    if (v.includes('MAGHFOOR') || v.includes('MAGFOOR')) return 'MAG';
+    if (v.includes('NOUMAN') || v.includes('NUMAN')) return 'NOU';
     if (v.includes('ADIL')) return 'ADI';
-    if (v.includes('MUDASS')) return 'MUD';
+    if (v.includes('MUDASS') || v.includes('MUDASSER') || v.includes('MUDASIR') || v.includes('MUDASER')) return 'MUD';
     if (v.includes('TALHA')) return 'TAL';
-    if (v.includes('MASHHOOD')) return 'MAS';
+    if (v.includes('MASHHOOD') || v.includes('MASHOOD') || v.includes('MASHUD')) return 'MAS';
     if (v.includes('ZAIN')) return 'ZAI';
     return '';
   }
