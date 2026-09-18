@@ -1,76 +1,90 @@
-# Walkthrough: Vendor & Company Matrix Dashboard, Manual PR Tracking & Purchaser Rules
+# Walkthrough: Dedicated "Lines Pending PO" View with 1-by-1 Purchaser Assignment & Intuitive Filters
 
-## Overview of New Features
+## What Changed & What Was Built
 
-Three major features have been implemented and pushed to production:
-1. **📊 Dedicated Vendor & Company Procurement Matrix Dashboard**:
-   - Requisitions categorized by the 8 internal purchasers (`SAR`, `MAG`, `NOU`, `ADI`, `MUD`, `TAL`, `MAS`, `ZAI`), external supplier POs (`OTHER_VENDORS`), and unassigned requisitions (`UNASSIGNED`).
-   - Grouped and sliced by company (**🏭 CEPL** and **🏭 SPPL**).
-   - Shows live line delivery rates, total lines, active lines, delivered lines, partial lines, open pending lines, and overdue counts.
-   - Interactive drill-down: Clicking any vendor card's **`View Requisitions ➔`** button automatically navigates to the PR Overview table filtered directly to that vendor group.
-2. **✍️ Dedicated "Manually Updated PRs" Filter Button & Badge**:
-   - Header button **`✍️ Manually Updated (32)`** immediately filters the table to the 32 requisitions that users/officers have actively updated with custom tracking statuses, remarks, or purchaser assignments.
-   - Table rows clearly flag these PRs with a prominent `✍️ Manual` badge.
-3. **Purchaser vs External Vendor Auto-Assignment Rule**:
-   - When a PR has a PO made:
-     - If the vendor is one of the 8 purchasers, flexible fuzzy matching assigns the purchaser code (`SAR`, `MAG`, `NOU`, `ADI`, `MUD`, `TAL`, `MAS`, `ZAI`), gracefully handling spelling variations in ERP exports (e.g. `MUDASSER GHAURI - CASH PURCHASE`, `MAGHFOOR UL HASSAN (CASH PURCHASE)`, `TALHA BAIG (CASH PURCHASE)`, `Nouman Khan (Cash Purchase)`, `Adil Mahmood`, etc.).
-     - If the vendor on whose name the PO is made is an external supplier (e.g. `FAST CABLES`, `AMMAR INDUSTRIES`), the `assigned_vendor` field is left empty (`-- Unassigned --`).
-   - Manual vendor assignments remain fully editable via inline dropdowns or bulk updates at any time, and are 100% preserved during Excel syncs.
+### 1. ⏳ Dedicated "Lines Pending PO" View (Line-Level Granularity)
+Users previously had to drill into individual PRs in the Overview tab to view lines that don't have a PO made. Now, there is a dedicated, high-performance view designed specifically for triage and purchaser assignment:
+- **Top Navigation Tab**: Added `⏳ Lines Pending PO` with a live red badge counter (`680+` unassigned lines) directly in the header view switcher.
+- **Clickable KPI Card**: Clicking the amber `Lines Pending PO ↗` KPI banner instantly opens this view.
+- **Header Summary Pills**:
+  - `Total Pending Lines`: Total queue count.
+  - `⏳ Unassigned`: Items waiting to be assigned to a purchaser (highlighted in red/amber).
+  - `✓ Assigned`: Items already assigned to a purchaser (highlighted in blue).
+- **Date & Aging Calculation**:
+  - Each line item displays its PR creation/approval date alongside an urgency badge (e.g., `100d ago`).
+  - Colors automatically highlight priority: `urgent` (red, >60 days), `warning` (amber, >30 days), and `normal` (slate).
 
 ---
 
-## Live Links & Status
-
-- **Web Portal**: [http://localhost:3000](http://localhost:3000)
-- **GitHub Repository**: [https://github.com/shafiulhassan17/pr-status-tracker.git](https://github.com/shafiulhassan17/pr-status-tracker.git)
-- **Status**: Live, tested, committed, and pushed to `origin/main`.
-
----
-
-## 1. Vendor & Company Procurement Matrix Breakdown
-
-The matrix classifies all active procurement into 10 groups:
-
-| Code | Purchaser / Vendor Group | Total PRs | CEPL PRs | SPPL PRs | Total Lines | Active Lines | Delivered Lines | Delivery Rate |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **SAR** | Sarfraz Ahmad | **180** | 51 | 129 | 830 | 815 | 506 | **61%** |
-| **MAG** | Maghfoor Ahmad | **79** | 10 | 69 | 473 | 473 | 185 | **39%** |
-| **NOU** | Nouman Khan | **97** | 78 | 19 | 667 | 647 | 487 | **73%** |
-| **ADI** | Adil Mahmood | **7** | 3 | 4 | 13 | 13 | 3 | **23%** |
-| **MUD** | Mudassir Ghauri | **10** | 7 | 3 | 32 | 32 | 16 | **50%** |
-| **TAL** | Talha Baig | **31** | 12 | 19 | 138 | 138 | 70 | **51%** |
-| **MAS** | Mashhood | **0** | 0 | 0 | 0 | 0 | 0 | **0%** |
-| **ZAI** | Muhammad Zain | **1** | 0 | 1 | 1 | 1 | 0 | **0%** |
-| **OTHER_VENDORS** | External Suppliers (Non-Purchaser POs) | **231** | 107 | 124 | 876 | 774 | 455 | **52%** |
-| **UNASSIGNED** | Unassigned / Awaiting PO | **193** | 100 | 93 | 749 | 747 | 0 | **0%** |
-
-*(Note: Requisitions with lines across multiple purchasers/suppliers appear under their respective groups in the matrix, ensuring 100% visibility).*
+### 2. ⚡ Inline 1-by-1 Purchaser Assignment (Matching Screenshot Menu)
+On each line in the table, an inline dropdown allows purchasers/managers to assign items one by one:
+- **Purchaser Options**:
+  - `SAR (Sarfraz Ahmad)`
+  - `MAG (Maghfoor Ahmad)`
+  - `NOU (Nouman Khan)`
+  - `ADI (Adil Mahmood)`
+  - `MUD (Mudassir Ghauri)`
+  - `TAL (Talha Baig)`
+  - `MAS (Mashhood)`
+  - `ZAI (Muhammad Zain)`
+  - `⏳ -- Unassigned --`
+- **Instant Live Feedback**:
+  - Selecting a purchaser immediately updates the database (`PATCH /api/lines/:lineId/assigned-vendor`) and logs an entry in `pr_status_history`.
+  - The dropdown visually transitions from dashed amber (`unassigned`) to crisp solid blue (`assigned`).
+  - Dynamic counter pills update on the fly without needing a full page reload.
+  - Displays instant confirmation toast (`✓ Assigned to SAR (Sarfraz Ahmad)`).
+- **Bulk Multi-Assignment**:
+  - Select multiple lines using checkboxes or "Select All".
+  - A floating quick-assign action bar appears at the top: choose a purchaser and click `⚡ Apply to Selected` to assign dozens of lines in a single transaction.
 
 ---
 
-## 2. UI Navigation & User Flow
-
-1. **Switch Views**:
-   - Click **`📊 Vendor Matrix`** in the top header switcher to open the matrix cards.
-   - Click **`📋 Overview`** to return to the consolidated requisitions table.
-2. **One-Click Manual Updates Filter**:
-   - Click **`✍️ Manually Updated 32`** in the top bar to immediately inspect the 32 requisitions with custom tracking statuses, notes, or assigned purchasers.
-3. **Filter PRs by Vendor**:
-   - Use the **`All Vendors & Purchasers`** dropdown in the toolbar to filter by any specific purchaser (e.g. `SAR`, `MAG`, `NOU`), `OTHER_VENDORS`, or `UNASSIGNED`.
-   - Alternatively, click **`View Requisitions (X) ➔`** on any vendor card in the matrix.
-4. **Plant Filtering**:
-   - Switching between **`All Plants`**, **`🏭 CEPL`**, and **`🏭 SPPL`** instantly recalibrates the cards, company pills, and counters in real time.
-5. **Preserving User Edits**:
-   - Clicking **`📥 Sync Excel`** updates all ERP files while maintaining 100% of user manual statuses, tracking remarks, and custom vendor reassignments.
+### 3. 🎯 Streamlined, Intuitive Filter Redesign
+Eliminated confusing duplicate "Pending PO" options across the overview toolbar:
+- **Overview Tab Filters**:
+  1. **PO Status**: `All Requisitions` | `✓ With PO Made` | `⏳ Awaiting PO`
+  2. **Purchaser / Vendor**: `All Purchasers / Vendors` | `SAR` | `MAG` | `NOU` | `ADI` | `MUD` | `TAL` | `MAS` | `ZAI` | `🏢 External Suppliers` | `⏳ Unassigned Lines`
+  3. **Lifecycle Status**: `All Lifecycle Statuses` | `🔥 Active Orders (Open/Pending)` | `✍️ Manually Updated` | `⚠️ Overdue Deliveries` | `⚡ Partially Delivered` | `✓ Fully Delivered` | `🧾 Invoiced & Settled` | `📋 Draft / Under Review`
+- **Pending Lines View Toolbar**:
+  1. **Instant Search**: Search by PR #, Item Description, or Remarks in real-time.
+  2. **Purchaser Filter**: `All Purchasers` | `⏳ Unassigned Only` | individual purchaser.
+  3. **PR Status**: `Active & Approved (Ready for PO)` | `Approved Lines Only` | `Draft / In Review` | `All Lines Without PO`.
+  4. **Sort Order**:
+     - `📅 Oldest PR First (Urgent)` *(Default)*
+     - `📅 Newest PR First`
+     - `PR Number (A-Z)`
+     - `Demand Qty (High to Low)`
+     - `Item Description (A-Z)`
+  5. **Export CSV**: Export all pending lines to CSV with one click.
 
 ---
 
-## 3. Verification & Git Log
+### 4. 📱 Mobile View Support
+For phones and smaller screens:
+- Mobile cards display essential information: Plant, PR #, Line #, Aging badge, Item Name, Quantity, Date, and the inline purchaser assignment dropdown.
 
-- **Backend Endpoints Verified**:
-  - `GET /api/dashboard/vendor-matrix`: Returns all 10 vendor groups with company breakdowns and delivery rates.
-  - `GET /api/prs?status=ManualUpdates`: Returns the 32 manually updated PRs with audit tags.
-  - `GET /api/prs?vendor_group=SAR`: Returns the 180 PRs assigned to Sarfraz Ahmad.
-  - `GET /api/prs?vendor_group=OTHER_VENDORS`: Returns the 231 PRs with external supplier POs.
-  - `GET /api/prs?vendor_group=UNASSIGNED`: Returns the 193 unassigned/pending-PO PRs.
-- **Git Commit**: `adb2119` pushed to `main`.
+---
+
+## Verification Results
+
+### Automated Test Suite (`scratch/test_pending_lines.js`)
+All tests executed against the live server on port 3000:
+1. **GET `/api/lines/pending-po?sort=oldest`**: HTTP 200, returns active lines with oldest dates at the top (`2026-06-01`, `2026-06-02`).
+2. **GET `/api/lines/pending-po?sort=newest`**: HTTP 200, returns newest dates at the top (`2026-09-12`).
+3. **Search Filter**: Accurate substring matching on item descriptions and remarks.
+4. **PATCH `/api/lines/:lineId/assigned-vendor`**: HTTP 200, updates vendor to `SAR`, appends audit trail in `pr_status_history`, and successfully reverts.
+5. **CSV Export `/api/export/csv?type=pending_lines`**: HTTP 200, downloads clean CSV with 774 rows including headers.
+
+---
+
+## How to Test in the Browser
+
+1. Open the portal at [http://localhost:3000](http://localhost:3000) (or via your Cloudflare tunnel).
+2. Sign in as **Procurement Engineer** (password: `12345567`) or **Procurement Manager** (password: `12345678`).
+3. Click the new **`⏳ Lines Pending PO`** tab in the header or the **`Lines Pending PO ↗`** KPI card.
+4. Notice lines are sorted oldest first by default, with aging tags (e.g. `102d ago`).
+5. Change any line's dropdown from `-- Unassigned --` to `SAR (Sarfraz Ahmad)` or `MAG (Maghfoor Ahmad)`:
+   - Notice the instant success toast.
+   - Notice the dropdown styling turns from amber dashed to solid blue.
+   - Notice the unassigned count decreases.
+6. Try the **Bulk Assign**: check 2 or 3 boxes, select a purchaser in the blue floating bar, and click **⚡ Apply to Selected**.

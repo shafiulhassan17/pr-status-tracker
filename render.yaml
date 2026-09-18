@@ -1,7 +1,10 @@
-﻿services:
+services:
   - type: web
     name: pr-status-tracker
     env: node
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0

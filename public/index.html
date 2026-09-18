@@ -3,38 +3,211 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PR Status Tracker | Supply Chain Management</title>
-  <link rel="stylesheet" href="styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
+  <title>Creative Group | PR Status & Procurement Portal</title>
+  <link rel="stylesheet" href="vendor/dataTables.min.css">
+  <link rel="stylesheet" href="styles.css?v=3.0">
+  <link rel="icon" type="image/png" href="creative_group_logo.png">
 </head>
 <body>
 
-  <!-- Top Navigation Header -->
+  <!-- ====================================================
+       LOGIN & ACCESS LEVEL GREETING OVERLAY
+       ==================================================== -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-card-header">
+        <div class="login-logo-wrap">
+          <img src="creative_group_logo.png" alt="Creative Group Logo" class="login-logo" style="max-height: 48px; width: auto; object-fit: contain;">
+        </div>
+        <div class="login-title">CREATIVE GROUP OF COMPANIES</div>
+        <div class="login-subtitle">PR Status & Procurement Lifecycle Portal</div>
+      </div>
+
+      <div class="login-content">
+        <!-- Single Authenticated Login Form for all 14 Enterprise Profiles -->
+        <form id="editorLoginForm" class="login-section editor-box" style="margin-top: 0; border: none; padding: 0;">
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label class="login-label" for="loginRoleSelect">Select User Profile</label>
+            <select id="loginRoleSelect" class="form-select login-select" style="font-weight: 600;">
+              <optgroup label="🛡️ Management & Leadership">
+                <option value="admin">Developer / Procurement Engineer (Admin)</option>
+                <option value="mas">Mashhood (Deputy Manager Procurement)</option>
+                <option value="executive">Executive Leadership</option>
+              </optgroup>
+              <optgroup label="👤 Dedicated Purchasers">
+                <option value="sar">Sarfraz Ahmad (SAR)</option>
+                <option value="mag">Maghfoor Ahmad (MAG)</option>
+                <option value="nou">Nouman Khan (NOU)</option>
+                <option value="adi">Adil Mahmood (ADI)</option>
+                <option value="mud">Mudassir Ghauri (MUD)</option>
+                <option value="tal">Talha Baig (TAL)</option>
+                <option value="zai">Muhammad Zain (ZAI)</option>
+              </optgroup>
+              <optgroup label="🏢 Specialized Offices">
+                <option value="finance">Finance Office</option>
+                <option value="audit">Audit Office</option>
+              </optgroup>
+              <optgroup label="🏭 Plant End-Users">
+                <option value="enduser_cepl">Plant End-User (CEPL Only)</option>
+                <option value="enduser_sppl">Plant End-User (SPPL Only)</option>
+              </optgroup>
+            </select>
+            <div id="loginRoleDesc" style="font-size: 11px; color: var(--slate-500); margin-top: 5px; line-height: 1.4;">
+              Lead Developer & Procurement Engineer - Full administrative oversight, analytics and system configuration
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label class="login-label" for="loginPasswordInput">Password</label>
+            <div style="position: relative; display: flex; align-items: center;">
+              <input type="password" id="loginPasswordInput" class="form-input login-input" placeholder="Enter password (e.g. admin123, mas123, sar123)..." autocomplete="current-password" required style="padding-right: 40px;">
+              <button type="button" id="btnTogglePassword" class="btn-toggle-pw" title="Show/Hide Password" tabindex="-1">👁️</button>
+            </div>
+          </div>
+
+          <div id="loginErrorMsg" class="login-error-alert" style="display: none;"></div>
+
+          <button type="submit" id="btnLoginSubmit" class="btn-login-editor" style="width: 100%; justify-content: center; padding: 12px; font-size: 14px;">
+            <span>🔑</span> Sign In
+          </button>
+        </form>
+      </div>
+
+      <div class="login-card-footer">
+        🔒 Role-Based Access Control • Dynamic Enterprise Supply Chain
+      </div>
+    </div>
+  </div>
+
+  <!-- Collapsible Hamburger Menu Backdrop & Drawer -->
+  <div id="drawerBackdrop" class="drawer-backdrop" style="display: none;"></div>
+  <aside id="hamburgerDrawer" class="hamburger-drawer">
+    <div class="drawer-header">
+      <div class="drawer-brand">
+        <img src="creative_group_logo.png" alt="Creative Group" class="drawer-brand-logo">
+        <div>
+          <div class="drawer-brand-title">CREATIVE GROUP</div>
+          <div class="drawer-brand-sub" id="drawerRoleDesc">Supply Chain & System Tools</div>
+        </div>
+      </div>
+      <button id="btnCloseDrawer" class="btn-close-drawer" title="Close Menu">✕</button>
+    </div>
+
+    <div class="drawer-body">
+      <!-- Section 1: Navigation -->
+      <div class="drawer-group">
+        <div class="drawer-group-title">PORTAL NAVIGATION</div>
+        <button class="drawer-btn" id="drawerNavOverview">
+          <span class="drawer-btn-icon">📋</span>
+          <div class="drawer-btn-content">
+            <span class="drawer-btn-label">Requisitions Overview</span>
+            <span class="drawer-btn-hint">Consolidated PR tracking</span>
+          </div>
+        </button>
+        <button class="drawer-btn" id="drawerNavPendingLines">
+          <span class="drawer-btn-icon">⏳</span>
+          <div class="drawer-btn-content">
+            <span class="drawer-btn-label">Lines Pending PO</span>
+            <span class="drawer-btn-hint">Assign buyers one-by-one</span>
+          </div>
+        </button>
+        <button class="drawer-btn" id="drawerNavFinancialTracking">
+          <span class="drawer-btn-icon">💵</span>
+          <div class="drawer-btn-content">
+            <span class="drawer-btn-label">Financial Tracking</span>
+            <span class="drawer-btn-hint">Purchaser cash in hand</span>
+          </div>
+        </button>
+        <button class="drawer-btn" id="drawerNavVendorDashboard">
+          <span class="drawer-btn-icon">📊</span>
+          <div class="drawer-btn-content">
+            <span class="drawer-btn-label">Vendor Matrix Dashboard</span>
+            <span class="drawer-btn-hint">Purchaser delivery performance</span>
+          </div>
+        </button>
+        <button class="drawer-btn" id="drawerBtnAuditTrail">
+          <span class="drawer-btn-icon">📜</span>
+          <div class="drawer-btn-content">
+            <span class="drawer-btn-label">Status Audit Trail</span>
+            <span class="drawer-btn-hint">Immutable change history</span>
+          </div>
+        </button>
+      </div>
+
+      <!-- Section 2: Data Synchronization (Admin / Lead Only) -->
+      <div class="drawer-group" id="drawerAdminGroup">
+        <div class="drawer-group-title">ADMIN & SYSTEM TOOLS</div>
+        <button class="drawer-action-btn admin-only" id="drawerBtnUserManagement" style="background: #eef2ff; color: #4338ca; border-color: #c7d2fe; font-weight: 600;">
+          <span>🔐</span> User & Password Management
+        </button>
+        <button class="drawer-action-btn admin-only" id="drawerBtnSyncGDrive">
+          <span>🔄</span> Sync Google Drive Settlements
+        </button>
+        <button class="drawer-action-btn admin-only" id="drawerBtnSyncExcel">
+          <span>📥</span> Re-sync ERP Excel Files
+        </button>
+        <button class="drawer-action-btn admin-only" id="drawerBtnExternalSql">
+          <span>🗄️</span> External SQL Database Setup
+        </button>
+      </div>
+
+      <!-- Section 3: Data Exports -->
+      <div class="drawer-group">
+        <div class="drawer-group-title">CSV EXPORTS</div>
+        <button class="drawer-action-btn" id="drawerBtnExportOverview">
+          <span>📊</span> Export Requisitions CSV
+        </button>
+        <button class="drawer-action-btn" id="drawerBtnExportLines">
+          <span>📄</span> Export Detailed Lines CSV
+        </button>
+        <button class="drawer-action-btn" id="drawerBtnExportPending">
+          <span>⏳</span> Export Pending PO Lines CSV
+        </button>
+      </div>
+    </div>
+
+    <div class="drawer-footer">
+      <div class="drawer-user-info">
+        <div style="font-size: 11px; color: var(--slate-400);">Signed in as</div>
+        <strong id="drawerUserName" style="color: var(--slate-900); font-size: 13px;">User</strong>
+        <div id="drawerUserBadgePill" class="role-pill pill-viewer" style="margin-top: 4px; display: inline-block;">Viewer</div>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="drawerBtnSignOut" style="width: 100%; margin-top: 10px;">
+        🚪 Logout
+      </button>
+    </div>
+  </aside>
+
+  <!-- Top Navigation Header (Decluttered Minimalist Primary View) -->
   <header class="app-header">
     <div class="header-container">
       <div class="brand-section">
-        <div class="brand-icon">📦</div>
-        <div>
-          <div class="brand-title">PR STATUS TRACKER</div>
-          <div class="brand-subtitle">Procurement Lifecycle & Supply Chain Monitor</div>
+        <!-- Hamburger Menu Toggle Button -->
+        <button class="btn-hamburger" id="btnHamburgerToggle" title="Open Menu & Secondary Tools">
+          <span class="hamburger-icon">☰</span>
+        </button>
+        <div class="brand-logo-container">
+          <img src="creative_group_logo.png" alt="Creative Group" class="brand-logo-img">
+        </div>
+        <div class="brand-titles">
+          <div class="brand-title">CREATIVE GROUP</div>
+          <div class="brand-subtitle">PR Status & Procurement Portal</div>
         </div>
       </div>
 
       <div class="header-actions">
-        <!-- View Navigation Switcher -->
+        <!-- View Navigation Switcher: 3 Core Tabs Only -->
         <div class="view-nav-tabs">
           <button class="view-nav-btn active" id="btnNavOverview" title="View Requisitions Overview Table">
             📋 Overview
           </button>
-          <button class="view-nav-btn" id="btnNavVendorDashboard" title="View Vendor & Company Matrix Dashboard">
-            📊 Vendor Matrix
+          <button class="view-nav-btn" id="btnNavPendingLines" title="View All PR Lines Awaiting Purchase Order">
+            ⏳ Lines Pending PO <span class="nav-badge" id="navPendingLinesBadge">0</span>
+          </button>
+          <button class="view-nav-btn" id="btnNavCashSettlement" title="View Purchaser Financial Metrics & Cash in Hand">
+            💵 Financial Tracking <span class="nav-badge" id="navCashInHandBadge" style="background:#d97706;">PKR 3.26M</span>
           </button>
         </div>
-
-        <!-- Manually Updated Quick Button -->
-        <button class="btn btn-secondary btn-sm" id="btnManualUpdatedPrs" title="Filter to PRs with manual status/remarks updates">
-          ✍️ Manually Updated <span id="manualPrBadge" style="background:#2563eb; color:#fff; padding:2px 7px; border-radius:10px; font-size:11px; font-weight:700; margin-left:3px;">0</span>
-        </button>
 
         <!-- Plant Selector -->
         <div style="display: flex; align-items: center; background: #f1f5f9; padding: 3px; border-radius: 8px; border: 1px solid var(--slate-300);">
@@ -43,18 +216,21 @@
           <button class="plant-tab" data-plant="SPPL" id="tabPlantSPPL">🏭 SPPL</button>
         </div>
 
-        <button class="btn btn-secondary btn-sm" id="btnRefreshView" title="Refresh screen with latest database records">
+        <!-- Quick Action Buttons -->
+        <button class="btn btn-secondary btn-sm" id="btnRefreshView" title="Refresh screen with latest records">
           🔄 Refresh
         </button>
-        <button class="btn btn-secondary btn-sm" id="btnSyncExcel" title="Sync ERP files from excel_files folder (Preserves all tracking statuses)">
-          📥 Sync Excel
-        </button>
-        <button class="btn btn-secondary btn-sm" id="btnExportOverview" title="Export current overview to CSV">
-          📊 Export CSV
-        </button>
-        <button class="btn btn-secondary btn-sm" id="btnExternalSql" title="Configure External SQL Database connection">
-          🗄️ External SQL DB
-        </button>
+
+        <!-- User Badge & Logout -->
+        <div id="userHeaderSection" style="display: flex; align-items: center; gap: 8px; margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--slate-300);">
+          <div id="userBadge" class="user-role-badge">
+            <span id="userBadgeIcon">👤</span>
+            <span id="userBadgeName">Checking...</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btnSignOut" title="Sign out of portal" style="padding: 4px 8px; font-size: 11px;">
+            🚪 Logout
+          </button>
+        </div>
       </div>
     </div>
   </header>
@@ -72,10 +248,10 @@
         <span class="kpi-value" id="kpiLinesWithPo">-</span>
         <span class="kpi-meta" id="kpiLinesWithPoMeta">Converted to Purchase Order</span>
       </div>
-      <div class="kpi-card amber">
-        <span class="kpi-title">Lines Pending PO</span>
+      <div class="kpi-card amber kpi-clickable" id="cardKpiPendingPo" title="Click to view and assign lines pending PO (Oldest first)">
+        <span class="kpi-title">Lines Pending PO ↗</span>
         <span class="kpi-value" id="kpiLinesWithoutPo">-</span>
-        <span class="kpi-meta" id="kpiLinesWithoutPoMeta">Awaiting PO Issuance</span>
+        <span class="kpi-meta" id="kpiLinesWithoutPoMeta">Click to assign buyers</span>
       </div>
       <div class="kpi-card green">
         <span class="kpi-title">Fully Delivered Lines</span>
@@ -95,6 +271,53 @@
     </div>
   </section>
 
+  <!-- Executive Oversight & Automated Risk Alert Banner (Visible to Executive Leadership & Admin) -->
+  <section class="executive-alert-section" id="executiveAlertSection" style="display: none;">
+    <div class="executive-alert-card">
+      <div class="alert-card-header">
+        <div class="alert-header-title">
+          <span class="alert-icon">👔</span>
+          <strong>Executive Oversight & Automated Risk Alerts</strong>
+          <span class="alert-badge" id="execAlertBadge">0 Flagged Items</span>
+        </div>
+        <div class="alert-header-meta">Auto-detected anomalies requiring executive attention</div>
+      </div>
+      <div class="alert-pills-row">
+        <button type="button" class="alert-chip chip-overdue" id="btnAlertOverdue" title="Click to view severely overdue deliveries (>14 days)">
+          <span class="chip-dot"></span>
+          <span class="chip-label">🚨 Severely Overdue (&gt;14d):</span>
+          <strong class="chip-val" id="alertOverdueCount">0</strong>
+        </button>
+        <button type="button" class="alert-chip chip-unassigned" id="btnAlertUnassigned" title="Click to view stale unassigned lines (>30 days)">
+          <span class="chip-dot"></span>
+          <span class="chip-label">⏳ Stale Unassigned (&gt;30d):</span>
+          <strong class="chip-val" id="alertUnassignedCount">0</strong>
+        </button>
+        <button type="button" class="alert-chip chip-variance" id="btnAlertVariance" title="Click to view items with price variance >10%">
+          <span class="chip-dot"></span>
+          <span class="chip-label">⚠️ Price Variance (&gt;10%):</span>
+          <strong class="chip-val" id="alertVarianceCount">0</strong>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Incoming Line Transfers Banner (Visible to Purchasers when reassignment requests are pending) -->
+  <section class="executive-alert-section" id="transfersAlertSection" style="display: none;">
+    <div class="executive-alert-card" style="border-left: 4px solid #2563eb; background: #eff6ff;">
+      <div class="alert-card-header" style="align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+        <div class="alert-header-title" style="display: flex; align-items: center; gap: 10px;">
+          <span class="alert-icon" style="font-size: 20px;">🔄</span>
+          <span style="font-size: 14px; font-weight: 700; color: #1e40af;">Incoming Line Reassignments Waiting For Your Acceptance</span>
+          <span class="alert-badge" id="pendingTransfersBadge" style="background: #2563eb; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 12px;">0 Pending</span>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" id="btnReviewTransfers" style="background: #2563eb; font-size: 12px; padding: 6px 14px;">
+          Review & Respond ↗
+        </button>
+      </div>
+    </div>
+  </section>
+
   <!-- Main Content Wrapper -->
   <main class="main-container">
 
@@ -105,15 +328,16 @@
         <div class="filter-group">
           <div class="search-box">
             <span class="search-icon">🔍</span>
-            <input type="text" id="searchInput" class="search-input" placeholder="Search by PR #, PO #, Item Description, or Remarks...">
+            <input type="text" id="searchInput" class="search-input" placeholder="Search PR # (e.g. 003, 105), item, or remarks...">
+            <button type="button" id="btnClearSearch" class="btn-clear-search" style="display: none;" title="Clear search">✕</button>
           </div>
-          <select id="poStateFilter" class="select-filter">
-            <option value="All">All Requisitions (PO & No-PO)</option>
-            <option value="with_po">✓ With PO Created Only</option>
-            <option value="without_po">⏳ Pending PO Creation Only</option>
+          <select id="poStateFilter" class="select-filter" title="Filter by Purchase Order Status">
+            <option value="All">All Requisitions</option>
+            <option value="with_po">✓ With PO Made</option>
+            <option value="without_po">⏳ Awaiting PO</option>
           </select>
-          <select id="vendorGroupFilter" class="select-filter">
-            <option value="All">All Vendors & Purchasers</option>
+          <select id="vendorGroupFilter" class="select-filter" title="Filter by Assigned Purchaser / Vendor">
+            <option value="All">All Purchasers / Vendors</option>
             <option value="SAR">SAR (Sarfraz Ahmad)</option>
             <option value="MAG">MAG (Maghfoor Ahmad)</option>
             <option value="NOU">NOU (Nouman Khan)</option>
@@ -122,20 +346,18 @@
             <option value="TAL">TAL (Talha Baig)</option>
             <option value="MAS">MAS (Mashhood)</option>
             <option value="ZAI">ZAI (Muhammad Zain)</option>
-            <option value="OTHER_VENDORS">🏢 Other / External Vendors</option>
-            <option value="UNASSIGNED">⏳ Unassigned / Pending PO</option>
+            <option value="OTHER_VENDORS">🏢 External Suppliers</option>
+            <option value="UNASSIGNED">⏳ Unassigned Lines</option>
           </select>
-          <select id="statusFilter" class="select-filter">
-            <option value="All">All Requisitions (All Statuses)</option>
-            <option value="Active">🔥 Active PRs Only (Excl. Invoiced & Draft)</option>
-            <option value="ManualUpdates">✍️ Manually Updated PRs Only</option>
-            <option value="Invoiced">✓ Invoiced (Finished / Settled)</option>
-            <option value="PreApproval">📋 Draft / In Review / Rejected</option>
-            <option value="Fully Received">Fully Received</option>
-            <option value="Partially Delivered">Partially Delivered</option>
-            <option value="Open order">Open order</option>
-            <option value="Pending PO Creation">Pending PO Creation</option>
+          <select id="statusFilter" class="select-filter" title="Filter by Delivery / Lifecycle Status">
+            <option value="All">All Lifecycle Statuses</option>
+            <option value="Active">🔥 Active Orders (Open/Pending)</option>
+            <option value="ManualUpdates">✍️ Manually Updated</option>
             <option value="Overdue">⚠️ Overdue Deliveries</option>
+            <option value="Partially Delivered">⚡ Partially Delivered</option>
+            <option value="Fully Received">✓ Fully Delivered</option>
+            <option value="Invoiced">🧾 Invoiced & Settled</option>
+            <option value="PreApproval">📋 Draft / Under Review</option>
           </select>
         </div>
 
@@ -144,14 +366,13 @@
         </div>
       </div>
 
-      <!-- PR Overview Master Table -->
-      <div class="table-responsive">
-        <table class="data-table">
-          <thead>
+      <!-- PR Overview Master Table (Desktop View) -->
+      <div class="table-responsive desktop-only-view">
+        <table class="data-table" id="prOverviewTable">
+          <thead id="prOverviewThead">
             <tr class="column-header-row">
               <th style="width: 70px;">PLANT</th>
-              <th class="sticky-col">PR NUMBER</th>
-              <th>PO NUMBER</th>
+              <th style="width: 120px;">PR NUMBER</th>
               <th>PURPOSE / REQUISITION REMARKS</th>
               <th>GENERAL STATUS</th>
               <th style="text-align: center;">TOTAL LINES</th>
@@ -168,6 +389,11 @@
             <!-- Dynamically Rendered -->
           </tbody>
         </table>
+      </div>
+
+      <!-- PR Overview Essential Cards (Mobile View) -->
+      <div class="mobile-only-view" id="prMobileList">
+        <!-- Dynamically Rendered Mobile Cards -->
       </div>
     </div>
 
@@ -215,8 +441,19 @@
         </div>
       </div>
 
-      <!-- Column Toggle Toolbar ("tuck in these columns somewhere which we can turn on or off as needed") -->
-      <div style="padding: 10px 20px; background-color: #f8fafc; border-bottom: 1px solid var(--slate-200); display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px;">
+      <!-- PR Lines Search & Item Filter Bar -->
+      <div style="padding: 12px 20px; background-color: #ffffff; border-bottom: 1px solid var(--slate-200); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 260px;">
+          <input type="text" id="lineItemSearchInput" class="search-input" placeholder="🔍 Search item description, item code, or line # in this PR..." style="max-width: 420px; font-size: 13px;">
+          <button type="button" class="btn btn-secondary btn-sm" id="btnClearLineSearch" style="display: none; padding: 4px 8px; font-size: 11px;">✕ Clear</button>
+        </div>
+        <div style="font-size: 12px; color: var(--slate-500);">
+          Showing <strong id="displayedLineCount" style="color: var(--slate-900);">0</strong> Line Items
+        </div>
+      </div>
+
+      <!-- Column Toggle Toolbar (Desktop View) -->
+      <div class="desktop-only-view" style="padding: 10px 20px; background-color: #f8fafc; border-bottom: 1px solid var(--slate-200); display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px;">
         <span style="font-weight: 700; color: var(--slate-600); display: flex; align-items: center; gap: 4px;">
           👁️ Toggle Additional Columns:
         </span>
@@ -226,11 +463,11 @@
         <label class="col-toggle-label"><input type="checkbox" id="toggleAssignedVendor"> Assigned Vendor</label>
         <label class="col-toggle-label"><input type="checkbox" id="toggleCancelled"> Cancelled Qty</label>
         <label class="col-toggle-label"><input type="checkbox" id="togglePrice"> Purchase Price</label>
-        <label class="col-toggle-label"><input type="checkbox" id="toggleMilestones"> Milestone Dates (PO Date, Expected, GRN, Invoice)</label>
+        <label class="col-toggle-label"><input type="checkbox" id="toggleMilestones"> Other Milestones (PO Date, GRN, Invoice)</label>
       </div>
 
-      <!-- Line-Level Table with Core & Toggleable Columns -->
-      <div class="table-responsive">
+      <!-- Line-Level Table with Core & Toggleable Columns (Desktop View) -->
+      <div class="table-responsive desktop-only-view">
         <table class="data-table">
           <thead>
             <!-- Group Header Row -->
@@ -240,8 +477,9 @@
               </th>
               <th colspan="2" class="group-blue">Requisition</th>
               <th colspan="4" class="group-grey">Item Details</th>
-              <th colspan="2" class="group-orange">Status & Tracking</th>
+              <th colspan="3" class="group-orange">Status & Urgency</th>
               <th colspan="3" class="group-yellow">Quantities</th>
+              <th colspan="1" class="group-green">Delivery</th>
               <!-- Toggleable Group Headers -->
               <th class="col-extra col-remarks group-grey" style="display: none;">Remarks</th>
               <th colspan="2" class="col-extra col-sitewh group-grey" style="display: none;">Location</th>
@@ -249,21 +487,23 @@
               <th class="col-extra col-assigned group-blue" style="display: none;">Assigned</th>
               <th class="col-extra col-cancelled group-orange" style="display: none;">Cancelled</th>
               <th class="col-extra col-price group-yellow" style="display: none;">Pricing</th>
-              <th colspan="4" class="col-extra col-milestones group-green" style="display: none;">Milestone Dates</th>
+              <th colspan="3" class="col-extra col-milestones group-green" style="display: none;">Other Milestones</th>
             </tr>
             <!-- Individual Column Headers -->
             <tr class="column-header-row">
-              <th class="sticky-col">PR NUMBER</th>
+              <th style="width: 120px;">PR NUMBER</th>
               <th>PO NUMBER</th>
               <th>LINE #</th>
               <th>ITEM ID</th>
               <th>ITEM NAME</th>
               <th>UNIT</th>
               <th>PO STATUS (ERP)</th>
-              <th style="min-width: 280px; background-color: #eff6ff; color: #1e40af;">STATUS & REMARKS (TRACKING)</th>
+              <th style="min-width: 260px; background-color: #eff6ff; color: #1e40af;">STATUS & REMARKS (TRACKING)</th>
+              <th style="width: 110px; text-align: center; background-color: #fff7ed; color: #c2410c;">URGENCY</th>
               <th style="text-align: right;">DEMAND QTY</th>
               <th style="text-align: right;">RECEIVED QTY</th>
               <th style="text-align: right;">INVOICED QTY</th>
+              <th style="width: 140px; text-align: center; background-color: #f0fdf4; color: #166534;">EXPECTED DLV DATE</th>
               <!-- Toggleable individual headers -->
               <th class="col-extra col-remarks" style="display: none;">REMARKS</th>
               <th class="col-extra col-sitewh" style="display: none;">SITE</th>
@@ -273,7 +513,6 @@
               <th class="col-extra col-cancelled" style="display: none; text-align: right;">CANCELLED QTY</th>
               <th class="col-extra col-price" style="display: none; text-align: right;">PURCHASE PRICE</th>
               <th class="col-extra col-milestones" style="display: none;">PO CREATE DATE</th>
-              <th class="col-extra col-milestones" style="display: none;">EXPECTED DLV DATE</th>
               <th class="col-extra col-milestones" style="display: none;">LAST GRN DATE</th>
               <th class="col-extra col-milestones" style="display: none;">LAST INVOICE DATE</th>
             </tr>
@@ -282,6 +521,11 @@
             <!-- Dynamically Rendered -->
           </tbody>
         </table>
+      </div>
+
+      <!-- Line-Level Essential Cards (Mobile View) -->
+      <div class="mobile-only-view" id="prDetailMobileList">
+        <!-- Dynamically Rendered Mobile Line Cards -->
       </div>
 
       <!-- Floating Bulk Action Bar (Visible when >= 1 line selected) -->
@@ -296,6 +540,140 @@
         <button type="button" class="bulk-btn-clear" id="btnClearBulkSelection">
           ✕ Clear Selection
         </button>
+      </div>
+    </div>
+
+    <!-- VIEW 2b: LINES PENDING PO (Dedicated Line-Level View for PR lines without PO) -->
+    <div id="viewPendingLines" class="content-card" style="display: none;">
+      <!-- Top Strip / Header -->
+      <div class="pending-header-strip">
+        <div>
+          <h2 class="pending-header-title">
+            <span>⏳</span> Lines Pending Purchase Order (PO)
+          </h2>
+          <div class="pending-header-subtitle">
+            All requisition line items awaiting PO creation. Assign purchasers one-by-one or in bulk. Oldest PR requisitions prioritized first.
+          </div>
+        </div>
+
+        <div class="pending-header-stats">
+          <div class="stat-pill pill-total">
+            <span class="pill-label">Total Pending Lines</span>
+            <span class="pill-val" id="statPendingTotal">0</span>
+          </div>
+          <div class="stat-pill pill-unassigned">
+            <span class="pill-label">⏳ Unassigned</span>
+            <span class="pill-val" id="statPendingUnassigned">0</span>
+          </div>
+          <div class="stat-pill pill-assigned">
+            <span class="pill-label">✓ Assigned</span>
+            <span class="pill-val" id="statPendingAssigned">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="toolbar" style="flex-wrap: wrap; gap: 10px;">
+        <div class="filter-group" style="flex: 1; min-width: 280px; flex-wrap: wrap;">
+          <div class="search-box" style="flex: 1; min-width: 220px;">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="pendingLinesSearchInput" class="search-input" placeholder="Search PR #, Item Description, or Remarks...">
+          </div>
+          <select id="pendingLinesBuyerFilter" class="select-filter" title="Filter by Assigned Purchaser">
+            <option value="ALL">All Purchasers (Assigned & Unassigned)</option>
+            <option value="UNASSIGNED">⏳ Unassigned Only</option>
+            <option value="SAR">SAR (Sarfraz Ahmad)</option>
+            <option value="MAG">MAG (Maghfoor Ahmad)</option>
+            <option value="NOU">NOU (Nouman Khan)</option>
+            <option value="ADI">ADI (Adil Mahmood)</option>
+            <option value="MUD">MUD (Mudassir Ghauri)</option>
+            <option value="TAL">TAL (Talha Baig)</option>
+            <option value="MAS">MAS (Mashhood)</option>
+            <option value="ZAI">ZAI (Muhammad Zain)</option>
+          </select>
+          <select id="pendingLinesStatusFilter" class="select-filter" title="Filter by PR Status">
+            <option value="active">Active & Approved (Ready for PO)</option>
+            <option value="approved">Approved Lines Only</option>
+            <option value="preapproval">Draft / In Review</option>
+            <option value="all">All Lines Without PO</option>
+          </select>
+          <select id="pendingLinesSortFilter" class="select-filter" title="Sort Order">
+            <option value="oldest">📅 Oldest PR First (Urgent)</option>
+            <option value="newest">📅 Newest PR First</option>
+            <option value="pr_number">PR Number (A-Z)</option>
+            <option value="qty_desc">Demand Qty (High to Low)</option>
+            <option value="item_name">Item Description (A-Z)</option>
+          </select>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="font-size: 13px; color: var(--slate-500);">
+            Showing <strong id="pendingLinesDisplayCount" style="color: var(--slate-900);">0</strong> Line Items
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btnExportPendingLinesCsv" title="Export Pending Lines to CSV">
+            📊 Export CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- Bulk Quick Assign Bar (Appears when lines checked) -->
+      <div id="pendingLinesBulkBar" class="pending-bulk-bar" style="display: none;">
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span style="font-weight: 700; font-size: 13px; color: #1e40af;">
+            ☑️ <span id="pendingSelectedCountText">0</span> lines selected
+          </span>
+          <span style="color: #93c5fd;">|</span>
+          <label style="font-size: 12px; color: #1e3a8a; font-weight: 600;">Assign To:</label>
+          <select id="pendingBulkBuyerSelect" class="form-select" style="padding: 4px 8px; font-size: 12px; width: 220px;">
+            <option value="">-- Select Purchaser --</option>
+            <option value="SAR">SAR (Sarfraz Ahmad)</option>
+            <option value="MAG">MAG (Maghfoor Ahmad)</option>
+            <option value="NOU">NOU (Nouman Khan)</option>
+            <option value="ADI">ADI (Adil Mahmood)</option>
+            <option value="MUD">MUD (Mudassir Ghauri)</option>
+            <option value="TAL">TAL (Talha Baig)</option>
+            <option value="MAS">MAS (Mashhood)</option>
+            <option value="ZAI">ZAI (Muhammad Zain)</option>
+            <option value="__UNASSIGN__">-- Unassign (Clear Buyer) --</option>
+          </select>
+          <button type="button" class="btn btn-primary btn-sm" id="btnApplyPendingBulkAssign">
+            ⚡ Apply to Selected
+          </button>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" id="btnClearPendingSelection" style="background: white;">
+          ✕ Clear
+        </button>
+      </div>
+
+      <!-- Pending Lines Data Table (Desktop View) -->
+      <div class="table-responsive desktop-only-view">
+        <table class="data-table" id="pendingLinesTable">
+          <thead>
+            <tr class="column-header-row">
+              <th style="width: 36px; text-align: center;">
+                <input type="checkbox" id="selectAllPendingLinesCheckbox" title="Select all visible lines">
+              </th>
+              <th style="width: 65px;">PLANT</th>
+              <th style="width: 110px;">PR NUMBER</th>
+              <th style="width: 55px; text-align: center;">LINE #</th>
+              <th style="width: 140px;">PR DATE / AGING</th>
+              <th>ITEM DESCRIPTION</th>
+              <th style="width: 100px; text-align: right;">DEMAND QTY</th>
+              <th style="width: 100px;">PR STATUS</th>
+              <th style="width: 230px;">ASSIGNED PURCHASER</th>
+              <th>REMARKS</th>
+              <th style="width: 60px; text-align: center;">AUDIT</th>
+            </tr>
+          </thead>
+          <tbody id="pendingLinesTableBody">
+            <!-- Dynamically Rendered by app.js -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Mobile Cards for Pending Lines -->
+      <div class="mobile-only-view" id="pendingLinesMobileList">
+        <!-- Dynamically Rendered for phones -->
       </div>
     </div>
 
@@ -327,6 +705,127 @@
         <div class="vendor-matrix-grid" id="vendorMatrixGrid">
           <!-- Dynamically populated by app.js -->
         </div>
+      </div>
+    </div>
+
+    <!-- VIEW 4: CASH IN HAND & PURCHASER SETTLEMENTS (GOOGLE DRIVE SYNCED) -->
+    <div id="viewCashSettlement" class="content-card" style="display: none;">
+      <!-- Dashboard Top Strip -->
+      <div class="cash-header-strip">
+        <div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h2 class="cash-header-title">
+              <span>💵</span> Financial Tracking Dashboard (View-Only)
+            </h2>
+            <span class="live-pulse-badge">Live Google Drive</span>
+          </div>
+          <div class="cash-header-subtitle">
+            High-level purchaser financial metrics: Total Purchases Made, Total Returns, Net Amount Spent, and Net Cash in Hand. Informational view auto-synced from Google Drive every 15 minutes.
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <div class="sync-status-indicator" id="syncStatusIndicator">
+            <span class="sync-dot"></span>
+            <span id="syncStatusText">Synced: Checking...</span>
+          </div>
+          <button class="btn btn-primary btn-sm" id="btnManualSyncGDrive">
+            <span class="btn-sync-icon">🔄</span> Sync Now
+          </button>
+        </div>
+      </div>
+
+      <!-- Financial KPI Banner -->
+      <div class="cash-kpi-grid">
+        <div class="cash-kpi-card highlight-card">
+          <div class="cash-kpi-label">TOTAL CASH IN HAND</div>
+          <div class="cash-kpi-value warning-text" id="kpiCashInHand">PKR 0</div>
+          <div class="cash-kpi-meta" id="kpiUnsettledPosCount">0 Unsettled Orders</div>
+        </div>
+        <div class="cash-kpi-card">
+          <div class="cash-kpi-label">TOTAL CASH ADVANCED</div>
+          <div class="cash-kpi-value" id="kpiTotalCashIssued">PKR 0</div>
+          <div class="cash-kpi-meta">YTD Cash Issued</div>
+        </div>
+        <div class="cash-kpi-card">
+          <div class="cash-kpi-label">INVOICES CLEARED</div>
+          <div class="cash-kpi-value success-text" id="kpiTotalInvoiceReceived">PKR 0</div>
+          <div class="cash-kpi-meta" id="kpiInvoiceClearPct">0% Cleared</div>
+        </div>
+        <div class="cash-kpi-card">
+          <div class="cash-kpi-label">CASH RETURNED</div>
+          <div class="cash-kpi-value blue-text" id="kpiTotalCashReturned">PKR 0</div>
+          <div class="cash-kpi-meta">Refunded to Accounts</div>
+        </div>
+        <div class="cash-kpi-card" style="border-left: 3px solid #8b5cf6;">
+          <div class="cash-kpi-label">EMERGENCY ADVANCES</div>
+          <div class="cash-kpi-value" style="color: #7c3aed;" id="kpiEmergencyAdvances">PKR 0</div>
+          <div class="cash-kpi-meta" id="kpiEmergencyMeta">Advance Issued Without ERP PO</div>
+        </div>
+      </div>
+
+      <!-- Purchaser Cash Matrix Cards Grid -->
+      <div style="padding: 16px 20px 0;">
+        <div style="font-size: 14px; font-weight: 700; color: var(--slate-800); margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
+          <span>👤 Cash in Hand by Purchaser</span>
+          <span style="font-size: 12px; font-weight: 500; color: var(--slate-500);">Click any purchaser card to filter their orders below</span>
+        </div>
+        <div class="purchaser-cash-grid" id="purchaserCashGrid">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Toolbar for Detailed Settlement Table -->
+      <div class="toolbar" style="margin-top: 18px; flex-wrap: wrap; gap: 10px;">
+        <div class="filter-group" style="flex: 1; min-width: 280px; flex-wrap: wrap;">
+          <div class="search-box" style="flex: 1; min-width: 220px;">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="cashSearchInput" class="search-input" placeholder="Search PO #, PR #, Description, or Remarks...">
+          </div>
+          <select id="cashPurchaserFilter" class="select-filter" title="Filter by Purchaser">
+            <option value="ALL">All Purchasers</option>
+            <!-- Populated dynamically -->
+          </select>
+          <select id="cashStatusFilter" class="select-filter" title="Filter by Cash Status">
+            <option value="outstanding">💰 Cash in Hand Only (Balance > 0)</option>
+            <option value="all">All Cash Settlement POs</option>
+            <option value="overspent">⚠️ Purchaser Overspent (Balance < 0)</option>
+            <option value="settled">✓ Fully Settled / Cleared</option>
+          </select>
+        </div>
+
+        <div style="font-size: 13px; color: var(--slate-500);">
+          Showing <strong id="cashDisplayCount" style="color: var(--slate-900);">0</strong> Orders
+        </div>
+      </div>
+
+      <!-- Detailed PO Settlement Table (Desktop View) -->
+      <div class="table-responsive desktop-only-view">
+        <table class="data-table" id="cashTable">
+          <thead>
+            <tr class="column-header-row">
+              <th style="width: 65px;">PLANT</th>
+              <th style="width: 95px;">PO #</th>
+              <th style="width: 85px;">PR #</th>
+              <th style="width: 140px;">PURCHASER</th>
+              <th>ITEM / PURPOSE DESCRIPTION</th>
+              <th style="width: 105px; text-align: right;">CASH ISSUED</th>
+              <th style="width: 105px; text-align: right;">INVOICE RCVD</th>
+              <th style="width: 95px; text-align: right;">CASH RTRN</th>
+              <th style="width: 125px; text-align: right;">CASH IN HAND</th>
+              <th>SETTLEMENT REMARKS</th>
+              <th style="width: 100px; text-align: center;">GRN STATUS</th>
+            </tr>
+          </thead>
+          <tbody id="cashTableBody">
+            <!-- Dynamically Rendered -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Mobile List View -->
+      <div class="mobile-only-view" id="cashMobileList">
+        <!-- Dynamically Rendered for Mobile -->
       </div>
     </div>
 
@@ -579,9 +1078,485 @@ LEFT JOIN PurchReqLine pr ON pol.PURCHREQLINEREFID = pr.RECID;</pre>
     </div>
   </div>
 
+  <!-- MODAL 4: EXECUTIVE COMMENTS & NOTES -->
+  <div class="modal-overlay" id="modalComments">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">💬 Executive Comments & Instructions</div>
+          <div style="font-size: 12px; color: var(--slate-500);" id="commentsModalSubtitle">PR / Line Notes</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalComments')">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 18px 24px;">
+        <!-- Comments list timeline -->
+        <div id="commentsTimeline" class="comments-timeline-box" style="max-height: 280px; overflow-y: auto; margin-bottom: 16px; padding: 10px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--slate-200);">
+          <div style="font-size: 12px; color: var(--slate-400); text-align: center; padding: 20px 0;">No comments logged yet.</div>
+        </div>
+
+        <!-- Add comment form -->
+        <form id="formAddComment">
+          <input type="hidden" id="commentTargetPr" value="">
+          <input type="hidden" id="commentTargetLine" value="">
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label" for="commentInputText">Write Executive Instruction / Note</label>
+            <textarea id="commentInputText" class="form-textarea" rows="3" placeholder="Enter high-level guidance, priority note, or remarks..." required></textarea>
+          </div>
+          <div id="commentRestrictedNotice" style="display: none; padding: 8px 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; font-size: 12px; color: #dc2626; margin-bottom: 10px;">
+            🔒 Commenting is restricted to Executive Leadership and Admin.
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px;">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('modalComments')">Close</button>
+            <button type="submit" class="btn btn-primary" id="btnSubmitComment">
+              <span>✉️</span> Post Comment
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 5: IMMUTABLE STATUS AUDIT TRAIL -->
+  <div class="modal-overlay" id="modalAuditTrail">
+    <div class="modal-content" style="max-width: 1050px; width: 95vw;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">📜 Immutable Status Audit Trail</div>
+          <div style="font-size: 12px; color: var(--slate-500);" id="auditModalSubtitle">Server-verified append-only log with UTC timestamps</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalAuditTrail')">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+          <input type="text" id="auditFilterInput" class="search-input" placeholder="Filter by PR #, item, or officer..." style="max-width: 320px; font-size: 12px;">
+          <span style="font-size: 12px; color: var(--slate-500);">Showing latest <strong id="auditDisplayCount" style="color: var(--slate-900);">0</strong> historical entries</span>
+        </div>
+        <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+          <table class="data-table" id="auditTrailTable" style="font-size: 12px;">
+            <thead>
+              <tr class="column-header-row">
+                <th style="width: 135px;">TIMESTAMP (UTC)</th>
+                <th style="width: 65px;">PLANT</th>
+                <th style="width: 90px;">PR #</th>
+                <th style="width: 65px;">LINE #</th>
+                <th>ITEM DESCRIPTION</th>
+                <th style="width: 140px;">PREVIOUS STATUS</th>
+                <th style="width: 140px;">NEW STATUS</th>
+                <th style="width: 110px;">CHANGED BY</th>
+                <th style="width: 95px;">ROLE</th>
+                <th>REMARKS / REASON</th>
+              </tr>
+            </thead>
+            <tbody id="auditTrailTbody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modalAuditTrail')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 6: INTELLIGENT EXECUTIVE RISK ALERTS & ANOMALIES -->
+  <div class="modal-overlay" id="modalExecutiveAlerts">
+    <div class="modal-content" style="max-width: 1200px; width: 95vw;">
+      <div class="modal-header" style="background: linear-gradient(135deg, var(--brand-primary-dark) 0%, var(--brand-primary) 100%); color: #ffffff;">
+        <div>
+          <div class="modal-title" style="color: #ffffff; display: flex; align-items: center; gap: 8px;">
+            <span>👔</span> Executive Oversight & Automated Risk Analysis
+            <span class="alert-badge" id="modalExecTotalBadge" style="background: #ef4444; color: #fff;">0 Anomalies</span>
+          </div>
+          <div style="font-size: 12px; color: #bfdbfe;" id="modalExecSubtitle">
+            100% server-verified threshold anomalies requiring executive attention
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalExecutiveAlerts')" style="color: #fff;">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding: 16px 20px;">
+        <!-- Alert Category Tabs -->
+        <div style="display: flex; gap: 10px; margin-bottom: 16px; border-bottom: 2px solid var(--slate-200); padding-bottom: 10px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-secondary btn-sm exec-tab-btn active" id="tabBtnOverdue" onclick="switchExecAlertTab('overdue')">
+            🚨 Severely Overdue (&gt;14d) <strong id="tabOverdueCount" style="margin-left: 4px; padding: 2px 6px; border-radius: 10px; background: #fee2e2; color: #991b1b;">0</strong>
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm exec-tab-btn" id="tabBtnUnassigned" onclick="switchExecAlertTab('unassigned')">
+            ⏳ Stale Unassigned (&gt;30d) <strong id="tabUnassignedCount" style="margin-left: 4px; padding: 2px 6px; border-radius: 10px; background: #fef3c7; color: #92400e;">0</strong>
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm exec-tab-btn" id="tabBtnVariance" onclick="switchExecAlertTab('variance')">
+            ⚠️ Price Variance (&gt;10%) <strong id="tabVarianceCount" style="margin-left: 4px; padding: 2px 6px; border-radius: 10px; background: #ede9fe; color: #6b21a8;">0</strong>
+          </button>
+        </div>
+
+        <!-- Tab 1: Severely Overdue Table -->
+        <div id="execTabContentOverdue" class="exec-tab-content">
+          <div style="font-size: 13px; color: var(--slate-600); margin-bottom: 10px;">
+            Active procurement orders past their expected delivery date by <strong>more than 14 days</strong> with pending deliverable quantities.
+          </div>
+          <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+            <table class="data-table" id="execOverdueTable" style="font-size: 12px; width: 100%;">
+              <thead>
+                <tr class="column-header-row">
+                  <th style="width: 65px;">PLANT</th>
+                  <th style="width: 95px;">PR #</th>
+                  <th style="width: 95px;">PO #</th>
+                  <th>ITEM DESCRIPTION</th>
+                  <th style="width: 130px;">SUPPLIER</th>
+                  <th style="width: 95px;">EXP DATE</th>
+                  <th style="width: 110px; text-align: center;">DAYS OVERDUE</th>
+                  <th style="width: 100px; text-align: right;">REMAINING QTY</th>
+                  <th style="width: 80px; text-align: center;">ACTION</th>
+                </tr>
+              </thead>
+              <tbody id="execOverdueTbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 2: Stale Unassigned Table -->
+        <div id="execTabContentUnassigned" class="exec-tab-content" style="display: none;">
+          <div style="font-size: 13px; color: var(--slate-600); margin-bottom: 10px;">
+            Requisition lines registered <strong>over 30 days ago</strong> that are currently without a Purchase Order or an assigned buyer.
+          </div>
+          <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+            <table class="data-table" id="execUnassignedTable" style="font-size: 12px; width: 100%;">
+              <thead>
+                <tr class="column-header-row">
+                  <th style="width: 65px;">PLANT</th>
+                  <th style="width: 95px;">PR #</th>
+                  <th style="width: 60px; text-align: center;">LINE #</th>
+                  <th>ITEM DESCRIPTION</th>
+                  <th style="width: 95px; text-align: right;">DEMAND QTY</th>
+                  <th style="width: 100px;">DATE CREATED</th>
+                  <th style="width: 120px; text-align: center;">AGING</th>
+                  <th style="width: 180px;">ASSIGN BUYER</th>
+                </tr>
+              </thead>
+              <tbody id="execUnassignedTbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 3: Price Variance Table -->
+        <div id="execTabContentVariance" class="exec-tab-content" style="display: none;">
+          <div style="font-size: 13px; color: var(--slate-600); margin-bottom: 10px;">
+            Purchases where the unit price is <strong>over 10% higher</strong> than the baseline minimum purchase price recorded for that same item.
+          </div>
+          <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+            <table class="data-table" id="execVarianceTable" style="font-size: 12px; width: 100%;">
+              <thead>
+                <tr class="column-header-row">
+                  <th style="width: 65px;">PLANT</th>
+                  <th style="width: 95px;">PO #</th>
+                  <th style="width: 100px;">ITEM ID</th>
+                  <th>ITEM DESCRIPTION</th>
+                  <th style="width: 110px; text-align: right;">PO PRICE</th>
+                  <th style="width: 110px; text-align: right;">MIN BASELINE</th>
+                  <th style="width: 120px; text-align: center;">VARIANCE %</th>
+                  <th style="width: 80px; text-align: center;">ACTION</th>
+                </tr>
+              </thead>
+              <tbody id="execVarianceTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+  <!-- MODAL 7: USER PROFILES & PASSWORD MANAGEMENT DASHBOARD (Admin & Mashhood) -->
+  <div class="modal-overlay" id="modalUserManagement">
+    <div class="modal-content wide" style="max-width: 1100px; width: 96vw;">
+      <div class="modal-header" style="background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); color: #ffffff;">
+        <div>
+          <div class="modal-title" style="color: #ffffff; display: flex; align-items: center; gap: 8px;">
+            <span>🔐</span> User Profiles & Password Management Dashboard
+          </div>
+          <div style="font-size: 12px; color: #c7d2fe;">
+            Developer & Procurement Manager control panel • Change passwords for any user account anytime
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalUserManagement')" style="color: #fff;">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding: 16px 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <input type="text" id="userMgmtSearch" class="search-input" placeholder="Search by name, username, or role..." style="max-width: 320px; font-size: 12px;">
+          <div style="font-size: 12px; color: var(--slate-500);">
+            Total Profiles: <strong id="userMgmtCount" style="color: var(--slate-900);">0</strong>
+          </div>
+        </div>
+
+        <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+          <table class="data-table" id="userAccountsTable" style="font-size: 12px; width: 100%;">
+            <thead>
+              <tr class="column-header-row">
+                <th style="width: 100px;">USERNAME</th>
+                <th style="width: 180px;">FULL NAME</th>
+                <th style="width: 130px;">ROLE / ACCESS</th>
+                <th style="width: 100px; text-align: center;">BUYER CODE</th>
+                <th style="width: 90px; text-align: center;">PLANT</th>
+                <th>DESCRIPTION</th>
+                <th style="width: 130px; text-align: center;">ACTION</th>
+              </tr>
+            </thead>
+            <tbody id="userAccountsTbody">
+              <!-- Dynamically rendered -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 12px; color: var(--slate-500);">🔒 All password changes persist in local database</span>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modalUserManagement')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 8: ADMIN RESET PASSWORD DIALOG -->
+  <div class="modal-overlay" id="modalChangePassword">
+    <div class="modal-content" style="max-width: 480px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">🔑 Change User Password</div>
+          <div style="font-size: 12px; color: var(--slate-500);" id="pwdModalSubtitle">Updating password</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalChangePassword')">&times;</button>
+      </div>
+      <form id="formAdminChangePassword">
+        <input type="hidden" id="pwdTargetUsername">
+        <div class="modal-body">
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label class="form-label">Account</label>
+            <div id="pwdTargetAccountName" style="font-size: 13px; font-weight: 700; color: var(--slate-800);">-</div>
+          </div>
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label class="form-label" for="pwdNewInput">New Password *</label>
+            <div style="position: relative; display: flex; align-items: center;">
+              <input type="password" id="pwdNewInput" class="form-input" placeholder="Enter new password (min 4 characters)..." required style="padding-right: 40px;">
+              <button type="button" id="btnToggleAdminPw" class="btn-toggle-pw" title="Show/Hide Password" tabindex="-1">👁️</button>
+            </div>
+          </div>
+          <div id="pwdChangeErrorMsg" class="login-error-alert" style="display: none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalChangePassword')">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitAdminPwd">Update Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 9: PROPOSE LINE REASSIGNMENT (Purchaser Peer-to-Peer Transfer) -->
+  <div class="modal-overlay" id="modalProposeTransfer">
+    <div class="modal-content" style="max-width: 550px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">🔄 Reassign Line to Another Buyer</div>
+          <div style="font-size: 12px; color: var(--slate-500);" id="transferModalSubtitle">Requires recipient acceptance to finalize</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalProposeTransfer')">&times;</button>
+      </div>
+      <form id="formProposeTransfer">
+        <input type="hidden" id="transferTargetLineId">
+        <div class="modal-body">
+          <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; padding: 12px; margin-bottom: 14px; font-size: 13px;">
+            <div style="color: #0369a1; font-weight: 700;" id="transferLinePrBadge">-</div>
+            <div style="color: #0c4a6e; margin-top: 4px;" id="transferLineItemName">-</div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label class="form-label" for="transferTargetBuyerSelect">Assign To Purchaser *</label>
+            <select id="transferTargetBuyerSelect" class="form-select" required>
+              <option value="">-- Select Target Purchaser --</option>
+              <option value="SAR">SAR (Sarfraz Ahmad)</option>
+              <option value="MAG">MAG (Maghfoor Ahmad)</option>
+              <option value="NOU">NOU (Nouman Khan)</option>
+              <option value="ADI">ADI (Adil Mahmood)</option>
+              <option value="MUD">MUD (Mudassir Ghauri)</option>
+              <option value="TAL">TAL (Talha Baig)</option>
+              <option value="MAS">MAS (Mashhood)</option>
+              <option value="ZAI">ZAI (Muhammad Zain)</option>
+            </select>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label class="form-label" for="transferReasonNotes">Reason for Reassignment *</label>
+            <textarea id="transferReasonNotes" class="form-textarea" rows="3" placeholder="Explain why this line is being assigned to the selected buyer..." required></textarea>
+          </div>
+
+          <div style="font-size: 11px; color: var(--slate-500); line-height: 1.4;">
+            ℹ️ The line will remain in your queue until the recipient reviews and accepts the transfer.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalProposeTransfer')">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitTransferProposal">Submit Reassignment Request</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 10: INCOMING REASSIGNMENTS REVIEW (Accept or Decline) -->
+  <div class="modal-overlay" id="modalIncomingTransfers">
+    <div class="modal-content wide" style="max-width: 950px; width: 95vw;">
+      <div class="modal-header" style="background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%); color: #ffffff;">
+        <div>
+          <div class="modal-title" style="color: #ffffff; display: flex; align-items: center; gap: 8px;">
+            <span>📥</span> Incoming Line Reassignment Requests
+          </div>
+          <div style="font-size: 12px; color: #bfdbfe;">
+            Lines assigned to you by colleagues waiting for your acceptance
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalIncomingTransfers')" style="color: #fff;">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding: 16px 20px;">
+        <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+          <table class="data-table" id="incomingTransfersTable" style="font-size: 12px; width: 100%;">
+            <thead>
+              <tr class="column-header-row">
+                <th style="width: 65px;">PLANT</th>
+                <th style="width: 95px;">PR #</th>
+                <th style="width: 60px; text-align: center;">LINE #</th>
+                <th>ITEM DESCRIPTION</th>
+                <th style="width: 100px; text-align: right;">DEMAND QTY</th>
+                <th style="width: 120px;">REQUESTED BY</th>
+                <th style="width: 130px;">DATE</th>
+                <th>REASON / REMARKS</th>
+                <th style="width: 150px; text-align: center;">ACTION</th>
+              </tr>
+            </thead>
+            <tbody id="incomingTransfersTbody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modalIncomingTransfers')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 11: ASSIGN PR LINE URGENCY (Plant End-User & Management) -->
+  <div class="modal-overlay" id="modalAssignUrgency">
+    <div class="modal-content" style="max-width: 520px;">
+      <div class="modal-header" style="background: linear-gradient(135deg, #c2410c 0%, #ea580c 100%); color: #ffffff;">
+        <div>
+          <div class="modal-title" style="color: #ffffff; display: flex; align-items: center; gap: 8px;">
+            <span>⚡</span> Assign Line Urgency Level
+          </div>
+          <div style="font-size: 12px; color: #ffedd5;" id="urgencyModalSubtitle">
+            Set procurement priority for this requisition item
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalAssignUrgency')" style="color: #fff;">&times;</button>
+      </div>
+      <form id="formAssignUrgency">
+        <input type="hidden" id="urgencyLineId">
+        <div class="modal-body">
+          <div style="background-color: #fff7ed; border: 1px solid #ffedd5; border-radius: 6px; padding: 12px; margin-bottom: 16px; font-size: 13px;">
+            <div style="color: #9a3412; font-weight: 700;" id="urgencyLinePrBadge">-</div>
+            <div style="color: #431407; font-weight: 600; margin-top: 4px;" id="urgencyLineItemName">-</div>
+          </div>
+
+          <label class="form-label" style="margin-bottom: 8px; font-weight: 700;">Select Urgency Level *</label>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px;" id="urgencyOptionsContainer">
+            <label class="urgency-option-card active" style="cursor: pointer; border: 2px solid #16a34a; background: #f0fdf4; border-radius: 8px; padding: 12px 6px; text-align: center; transition: all 0.2s;" id="labelUrgencyNormal" onclick="selectUrgencyOption('Normal')">
+              <input type="radio" name="urgencyRadio" value="Normal" style="display: none;" checked>
+              <div style="font-size: 22px; margin-bottom: 4px;">🟢</div>
+              <div style="font-weight: 700; color: #166534; font-size: 13px;">Normal</div>
+              <div style="font-size: 10px; color: var(--slate-500); margin-top: 2px;">Standard routine</div>
+            </label>
+
+            <label class="urgency-option-card" style="cursor: pointer; border: 2px solid #cbd5e1; border-radius: 8px; padding: 12px 6px; text-align: center; transition: all 0.2s;" id="labelUrgencyUrgent" onclick="selectUrgencyOption('Urgent')">
+              <input type="radio" name="urgencyRadio" value="Urgent" style="display: none;">
+              <div style="font-size: 22px; margin-bottom: 4px;">🟡</div>
+              <div style="font-weight: 700; color: #b45309; font-size: 13px;">Urgent</div>
+              <div style="font-size: 10px; color: var(--slate-500); margin-top: 2px;">High priority</div>
+            </label>
+
+            <label class="urgency-option-card" style="cursor: pointer; border: 2px solid #cbd5e1; border-radius: 8px; padding: 12px 6px; text-align: center; transition: all 0.2s;" id="labelUrgencyCritical" onclick="selectUrgencyOption('Critical')">
+              <input type="radio" name="urgencyRadio" value="Critical" style="display: none;">
+              <div style="font-size: 22px; margin-bottom: 4px;">🔴</div>
+              <div style="font-weight: 800; color: #b91c1c; font-size: 13px;">Critical</div>
+              <div style="font-size: 10px; color: var(--slate-500); margin-top: 2px;">Line-stop / Emergency</div>
+            </label>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label" for="urgencyReasonNotes">Justification / Reason (Optional)</label>
+            <textarea id="urgencyReasonNotes" class="form-textarea" rows="2" placeholder="e.g. Line breakdown, stock exhausted, critical production dependency..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalAssignUrgency')">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitUrgency" style="background: #ea580c; border-color: #c2410c;">Save Urgency</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 12: EDIT EXPECTED DELIVERY DATE (Assigned Purchaser & Management) -->
+  <div class="modal-overlay" id="modalEditDeliveryDate">
+    <div class="modal-content" style="max-width: 480px;">
+      <div class="modal-header" style="background: linear-gradient(135deg, #15803d 0%, #16a34a 100%); color: #ffffff;">
+        <div>
+          <div class="modal-title" style="color: #ffffff; display: flex; align-items: center; gap: 8px;">
+            <span>📅</span> Set Expected Delivery Date
+          </div>
+          <div style="font-size: 12px; color: #dcfce7;" id="eddModalSubtitle">
+            Purchaser delivery commitment milestone
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modalEditDeliveryDate')" style="color: #fff;">&times;</button>
+      </div>
+      <form id="formEditDeliveryDate">
+        <input type="hidden" id="eddLineId">
+        <div class="modal-body">
+          <div style="background-color: #f0fdf4; border: 1px solid #dcfce7; border-radius: 6px; padding: 12px; margin-bottom: 14px; font-size: 13px;">
+            <div style="color: #166534; font-weight: 700;" id="eddLinePrBadge">-</div>
+            <div style="color: #14532d; font-weight: 600; margin-top: 4px;" id="eddLineItemName">-</div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label class="form-label" for="inputExpectedDlvDate">Expected Delivery Date *</label>
+            <input type="date" id="inputExpectedDlvDate" class="form-input" required style="font-size: 14px; font-weight: 600;">
+          </div>
+
+          <div style="margin-bottom: 14px;">
+            <label class="form-label" style="margin-bottom: 6px; font-size: 11px; font-weight: 600;">Quick Presets:</label>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setQuickDeliveryDate(3)" style="padding: 3px 8px; font-size: 11px;">+3 Days</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setQuickDeliveryDate(7)" style="padding: 3px 8px; font-size: 11px;">+7 Days (1 Wk)</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setQuickDeliveryDate(14)" style="padding: 3px 8px; font-size: 11px;">+14 Days (2 Wks)</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setQuickDeliveryDate(30)" style="padding: 3px 8px; font-size: 11px;">+30 Days (1 Mo)</button>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label" for="inputEddReason">Reason / Remarks for Date (Optional)</label>
+            <textarea id="inputEddReason" class="form-textarea" rows="2" placeholder="e.g. Supplier confirmed lead time, fabric in transit..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalEditDeliveryDate')">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitEdd" style="background: #16a34a; border-color: #15803d;">Update Delivery Date</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Toast Notification System -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="app.js"></script>
+  <!-- Vendor Libraries: jQuery & DataTables -->
+  <script src="vendor/jquery.min.js"></script>
+  <script src="vendor/dataTables.min.js"></script>
+
+  <script src="app.js?v=3.0"></script>
 </body>
 </html>

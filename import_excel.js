@@ -71,9 +71,14 @@ export function runExcelImport() {
       confirm_dlv_date TEXT,
       last_grn_date TEXT,
       last_invoice_date TEXT,
+      pr_approve_date TEXT,
+      pr_create_date TEXT,
       created_at TEXT DEFAULT (datetime('now', 'localtime')),
       updated_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
+
+    CREATE INDEX IF NOT EXISTS idx_pr_lines_approve_date ON pr_lines(pr_approve_date);
+    CREATE INDEX IF NOT EXISTS idx_pr_lines_create_date ON pr_lines(pr_create_date);
 
     CREATE TABLE IF NOT EXISTS pr_status_history (
       id TEXT PRIMARY KEY,
@@ -113,6 +118,8 @@ export function runExcelImport() {
     if (!cols.includes('status_remarks')) db.exec(`ALTER TABLE pr_lines ADD COLUMN status_remarks TEXT`);
     if (!cols.includes('assigned_vendor')) db.exec(`ALTER TABLE pr_lines ADD COLUMN assigned_vendor TEXT`);
     if (!cols.includes('prl_status')) db.exec(`ALTER TABLE pr_lines ADD COLUMN prl_status TEXT DEFAULT 'Closed'`);
+    if (!cols.includes('pr_approve_date')) db.exec(`ALTER TABLE pr_lines ADD COLUMN pr_approve_date TEXT`);
+    if (!cols.includes('pr_create_date')) db.exec(`ALTER TABLE pr_lines ADD COLUMN pr_create_date TEXT`);
   } catch (e) {
     console.log('pr_lines column check:', e.message);
   }
@@ -151,12 +158,14 @@ export function runExcelImport() {
       id, plant, pr_number, po_number, vendor_name, remarks, line_number,
       item_id, item_name, unit, site, warehouse, po_status, prl_status, tracking_status, status_remarks, assigned_vendor,
       purch_qty, received_qty, dlv_remain_qty, invoiced_qty, inv_remain_qty, cancelled_qty,
-      purchase_price, po_create_date, expected_dlv_date, confirm_dlv_date, last_grn_date, last_invoice_date
+      purchase_price, po_create_date, expected_dlv_date, confirm_dlv_date, last_grn_date, last_invoice_date,
+      pr_approve_date, pr_create_date
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?,
+      ?, ?
     )
   `);
 
@@ -183,6 +192,8 @@ export function runExcelImport() {
         confirm_dlv_date = ?,
         last_grn_date = ?,
         last_invoice_date = ?,
+        pr_approve_date = COALESCE(?, pr_approve_date),
+        pr_create_date = COALESCE(?, pr_create_date),
         tracking_status = ?,
         status_remarks = ?,
         assigned_vendor = ?,
@@ -316,6 +327,8 @@ export function runExcelImport() {
             confirmDlvDate,
             lastGrnDate,
             lastInvoiceDate,
+            prApproveDate || null,
+            null,
             userStatus,
             userRemarks,
             userVendor,
@@ -357,7 +370,9 @@ export function runExcelImport() {
             expectedDlvDate,
             confirmDlvDate,
             lastGrnDate,
-            lastInvoiceDate
+            lastInvoiceDate,
+            prApproveDate || null,
+            null
           );
 
           // Initial status history
@@ -417,6 +432,8 @@ export function runExcelImport() {
         const warehouse = r[20] ? String(r[20]).trim() : 'Sunder-MW';
         const reqDate = excelDateToISO(r[21]);
         const prlStatus = r[22] ? String(r[22]).trim() : 'Approved';
+        const prCreateDate = excelDateToISO(r[5]);
+        const prApproveDate = excelDateToISO(r[8]);
 
         const vendorName = r[26] ? String(r[26]).trim() : '';
         const polStatus = r[27] ? String(r[27]).trim() : (poNumber ? 'Open order' : `PR ${prlStatus} (Pending PO)`);
@@ -464,6 +481,8 @@ export function runExcelImport() {
             '',
             lastGrn || '',
             '',
+            prApproveDate || null,
+            prCreateDate || null,
             userStatus,
             userRemarks,
             userVendor,
@@ -504,7 +523,9 @@ export function runExcelImport() {
             reqDate || '',
             '',
             lastGrn || '',
-            ''
+            '',
+            prApproveDate || null,
+            prCreateDate || null
           );
 
           const histTime = poCreatedDate ? `${poCreatedDate} 09:00:00` : (reqDate ? `${reqDate} 09:00:00` : '2026-06-01 09:00:00');

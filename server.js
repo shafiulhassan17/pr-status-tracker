@@ -4,7 +4,9 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { DatabaseSync } from 'node:sqlite';
+import crypto from 'node:crypto';
 import { runExcelImport } from './import_excel.js';
+import { initCashSettlementTables, syncGoogleDriveCashSettlements, getCashSettlementData } from './gdrive_sync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,8 +16,15 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html') || filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 // Ensure data directory exists
 const dataDir = path.join(__dirname, 'data');
@@ -76,7 +85,45 @@ db.exec(`
     new_status TEXT NOT NULL,
     reason_notes TEXT,
     changed_by TEXT DEFAULT 'Purchasing Officer',
-    changed_at TEXT DEFAULT (datetime('now', 'localtime'))
+    changed_at TEXT DEFAULT (datetime('now', 'localtime')),
+    timestamp_utc TEXT,
+    user_id TEXT,
+    user_role TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS comments (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    pr_number TEXT NOT NULL,
+    line_id TEXT,
+    author_id TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    author_role TEXT NOT NULL,
+    comment_text TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    created_at_local TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    token TEXT PRIMARY KEY,
+    username TEXT,
+    role TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    last_active TEXT DEFAULT (datetime('now', 'localtime'))
+  );
+
+  CREATE TABLE IF NOT EXISTS user_accounts (
+    username TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    name TEXT NOT NULL,
+    buyer_code TEXT,
+    plant TEXT,
+    password TEXT NOT NULL,
+    description TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    updated_at TEXT DEFAULT (datetime('now', 'localtime'))
   );
 
   CREATE TABLE IF NOT EXISTS external_sql_config (
@@ -99,6 +146,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_plant ON pr_lines(plant);
   CREATE INDEX IF NOT EXISTS idx_history_line_id ON pr_status_history(line_id);
   CREATE INDEX IF NOT EXISTS idx_history_pr_number ON pr_status_history(pr_number);
+  CREATE INDEX IF NOT EXISTS idx_auth_token ON auth_sessions(token);
+  CREATE INDEX IF NOT EXISTS idx_comments_pr ON comments(pr_number);
+  CREATE INDEX IF NOT EXISTS idx_comments_line ON comments(line_id);
 `);
 
 // Column safety checks
@@ -109,15 +159,236 @@ try {
   if (!cols.includes('status_remarks')) db.exec(`ALTER TABLE pr_lines ADD COLUMN status_remarks TEXT`);
   if (!cols.includes('assigned_vendor')) db.exec(`ALTER TABLE pr_lines ADD COLUMN assigned_vendor TEXT`);
   if (!cols.includes('prl_status')) db.exec(`ALTER TABLE pr_lines ADD COLUMN prl_status TEXT DEFAULT 'Closed'`);
+  if (!cols.includes('proposed_vendor')) db.exec(`ALTER TABLE pr_lines ADD COLUMN proposed_vendor TEXT`);
+  if (!cols.includes('transfer_status')) db.exec(`ALTER TABLE pr_lines ADD COLUMN transfer_status TEXT`);
+  if (!cols.includes('transfer_requested_by')) db.exec(`ALTER TABLE pr_lines ADD COLUMN transfer_requested_by TEXT`);
+  if (!cols.includes('transfer_requested_at')) db.exec(`ALTER TABLE pr_lines ADD COLUMN transfer_requested_at TEXT`);
+  if (!cols.includes('urgency_level')) db.exec(`ALTER TABLE pr_lines ADD COLUMN urgency_level TEXT NOT NULL DEFAULT 'Normal'`);
+  if (!cols.includes('urgency_set_by')) db.exec(`ALTER TABLE pr_lines ADD COLUMN urgency_set_by TEXT`);
+  if (!cols.includes('urgency_set_at')) db.exec(`ALTER TABLE pr_lines ADD COLUMN urgency_set_at TEXT`);
+
+  const sessCols = db.prepare(`PRAGMA table_info(auth_sessions)`).all().map(c => c.name);
+  if (!sessCols.includes('username')) db.exec(`ALTER TABLE auth_sessions ADD COLUMN username TEXT`);
+
+  const histCols = db.prepare(`PRAGMA table_info(pr_status_history)`).all().map(c => c.name);
+  if (!histCols.includes('timestamp_utc')) db.exec(`ALTER TABLE pr_status_history ADD COLUMN timestamp_utc TEXT`);
+  if (!histCols.includes('user_id')) db.exec(`ALTER TABLE pr_status_history ADD COLUMN user_id TEXT`);
+  if (!histCols.includes('user_role')) db.exec(`ALTER TABLE pr_status_history ADD COLUMN user_role TEXT`);
 } catch (e) {
-  console.log('pr_lines column check:', e.message);
+  console.log('Column safety check info:', e.message);
 }
+
+// Seed default user accounts if not present
+const DEFAULT_ACCOUNTS = [
+  {
+    username: 'admin',
+    role: 'admin',
+    name: 'Developer / Procurement Engineer',
+    buyer_code: null,
+    plant: null,
+    password: 'admin123',
+    description: 'Lead Developer & Procurement Engineer - Full administrative oversight, analytics and system configuration'
+  },
+  {
+    username: 'mas',
+    role: 'admin',
+    name: 'Mashhood (Deputy Manager Procurement)',
+    buyer_code: 'MAS',
+    plant: null,
+    password: 'mas123',
+    description: 'Deputy Manager Procurement - Unrestricted co-management and administrative oversight'
+  },
+  {
+    username: 'sar',
+    role: 'purchaser',
+    name: 'Sarfraz Ahmad',
+    buyer_code: 'SAR',
+    plant: null,
+    password: 'sar123',
+    description: 'Procurement Purchaser (SAR)'
+  },
+  {
+    username: 'mag',
+    role: 'purchaser',
+    name: 'Maghfoor Ahmad',
+    buyer_code: 'MAG',
+    plant: null,
+    password: 'mag123',
+    description: 'Procurement Purchaser (MAG)'
+  },
+  {
+    username: 'nou',
+    role: 'purchaser',
+    name: 'Nouman Khan',
+    buyer_code: 'NOU',
+    plant: null,
+    password: 'nou123',
+    description: 'Procurement Purchaser (NOU)'
+  },
+  {
+    username: 'adi',
+    role: 'purchaser',
+    name: 'Adil Mahmood',
+    buyer_code: 'ADI',
+    plant: null,
+    password: 'adi123',
+    description: 'Procurement Purchaser (ADI)'
+  },
+  {
+    username: 'mud',
+    role: 'purchaser',
+    name: 'Mudassir Ghauri',
+    buyer_code: 'MUD',
+    plant: null,
+    password: 'mud123',
+    description: 'Procurement Purchaser (MUD)'
+  },
+  {
+    username: 'tal',
+    role: 'purchaser',
+    name: 'Talha Baig',
+    buyer_code: 'TAL',
+    plant: null,
+    password: 'tal123',
+    description: 'Procurement Purchaser (TAL)'
+  },
+  {
+    username: 'zai',
+    role: 'purchaser',
+    name: 'Muhammad Zain',
+    buyer_code: 'ZAI',
+    plant: null,
+    password: 'zai123',
+    description: 'Procurement Purchaser (ZAI)'
+  },
+  {
+    username: 'finance',
+    role: 'finance',
+    name: 'Finance Office',
+    buyer_code: null,
+    plant: null,
+    password: 'finance123',
+    description: 'Finance Office - Full cash settlement access, GDrive sync & financial comments'
+  },
+  {
+    username: 'audit',
+    role: 'audit',
+    name: 'Audit Office',
+    buyer_code: null,
+    plant: null,
+    password: 'audit123',
+    description: 'Internal Audit Office - Cross-plant oversight, risk alerts & immutable audit trail'
+  },
+  {
+    username: 'enduser_cepl',
+    role: 'plant_enduser',
+    name: 'Plant End-User (CEPL)',
+    buyer_code: null,
+    plant: 'CEPL',
+    password: 'cepl123',
+    description: 'Plant End-User for CEPL Requisitions'
+  },
+  {
+    username: 'enduser_sppl',
+    role: 'plant_enduser',
+    name: 'Plant End-User (SPPL)',
+    buyer_code: null,
+    plant: 'SPPL',
+    password: 'sppl123',
+    description: 'Plant End-User for SPPL Requisitions'
+  },
+  {
+    username: 'executive',
+    role: 'executive',
+    name: 'Executive Leadership',
+    buyer_code: null,
+    plant: null,
+    password: 'exec123',
+    description: 'Executive Leadership - Macro oversight, risk alerts and instructions'
+  }
+];
+
+const seedAccountStmt = db.prepare(`
+  INSERT OR IGNORE INTO user_accounts (username, role, name, buyer_code, plant, password, description)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+`);
+for (const acc of DEFAULT_ACCOUNTS) {
+  seedAccountStmt.run(acc.username, acc.role, acc.name, acc.buyer_code, acc.plant, acc.password, acc.description);
+}
+
+// Remove legacy viewer completely
+db.exec(`DELETE FROM user_accounts WHERE username = 'viewer' OR role = 'viewer';`);
+db.exec(`DELETE FROM auth_sessions WHERE role = 'viewer';`);
+
+// Auto-migration: Update admin name to Developer / Procurement Engineer
+db.prepare(`UPDATE user_accounts SET name = ?, description = ? WHERE username = 'admin'`).run(
+  'Developer / Procurement Engineer',
+  'Lead Developer & Procurement Engineer - Full administrative oversight, analytics and system configuration'
+);
+
+// Performance Optimization: Create SQLite Database Indexes for high-speed queries
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_pr_lines_pr ON pr_lines(pr_number);
+  CREATE INDEX IF NOT EXISTS idx_pr_lines_plant ON pr_lines(plant);
+  CREATE INDEX IF NOT EXISTS idx_pr_lines_assigned ON pr_lines(assigned_vendor);
+  CREATE INDEX IF NOT EXISTS idx_pr_lines_po ON pr_lines(po_number);
+  CREATE INDEX IF NOT EXISTS idx_pr_lines_urgency ON pr_lines(urgency_level);
+  CREATE INDEX IF NOT EXISTS idx_pr_status_hist_line ON pr_status_history(line_id);
+  CREATE INDEX IF NOT EXISTS idx_pr_status_hist_pr ON pr_status_history(pr_number);
+  CREATE INDEX IF NOT EXISTS idx_comments_pr ON comments(pr_number);
+  CREATE INDEX IF NOT EXISTS idx_comments_line ON comments(line_id);
+`);
+
+// Initialize Cash Settlement Tables from Google Drive
+initCashSettlementTables(db);
 
 // Auto-run Excel import if database is empty
 const lineCountRow = db.prepare('SELECT COUNT(*) as count FROM pr_lines').get();
 if (lineCountRow && lineCountRow.count === 0) {
   console.log('Database empty, importing Excel files from excel_files folder...');
   runExcelImport();
+}
+
+// Helper: Calculate Standardized Line Lifecycle Stage
+function computeLineLifecycleStage(l) {
+  if (!l) return 'Requisitioned';
+  const pQty = Number(l.purch_qty) || 0;
+  const rQty = Number(l.received_qty) || 0;
+  const iQty = Number(l.invoiced_qty) || 0;
+  const prl = (l.prl_status || '').toLowerCase();
+  const status = (l.tracking_status || l.po_status || '').toLowerCase();
+  const hasPo = l.po_number && l.po_number.trim() !== '';
+
+  if (!hasPo) {
+    if (prl === 'draft' || prl.includes('review')) return 'Requisitioned';
+    if (prl === 'approved') return 'Approved';
+    if (prl === 'rejected' || prl.includes('reject')) return 'Rejected';
+    if (prl === 'cancelled' || prl.includes('cancel')) return 'Cancelled';
+    return 'Approved'; // Default for active lines waiting for PO
+  }
+
+  // Has PO
+  if (status.includes('cancel') || prl === 'cancelled') return 'Cancelled';
+  if (iQty >= pQty && pQty > 0) return 'Invoiced & Closed';
+  if (status.includes('invoiced') || status.includes('settled') || status.includes('closed')) return 'Invoiced & Closed';
+  if (rQty >= pQty && pQty > 0) return 'Fully Received';
+  if (rQty > 0 || status.includes('partially') || status.includes('dispatched')) return 'Partially Received';
+  return 'PO Issued';
+}
+
+// Helper: Calculate Standardized PR Lifecycle Stage
+function computePrLifecycleStage(lines) {
+  if (!lines || lines.length === 0) return 'Requisitioned';
+  const stages = lines.map(computeLineLifecycleStage);
+
+  if (stages.every(s => s === 'Invoiced & Closed')) return 'Invoiced & Closed';
+  if (stages.every(s => s === 'Fully Received' || s === 'Invoiced & Closed')) return 'Fully Received';
+  if (stages.some(s => s === 'Partially Received' || s === 'Fully Received')) return 'Partially Received';
+  if (stages.some(s => s === 'PO Issued')) return 'PO Issued';
+  if (stages.every(s => s === 'Rejected')) return 'Rejected';
+  if (stages.every(s => s === 'Cancelled')) return 'Cancelled';
+  if (stages.some(s => s === 'Approved')) return 'Approved';
+  return 'Requisitioned';
 }
 
 // Helper: Calculate General PR Status from Line Statuses
@@ -223,20 +494,630 @@ function getManuallyUpdatedPrNumbers() {
 }
 
 // ----------------------------------------------------
+// AUTHENTICATION & ACCESS CONTROL CONFIGURATION (RBAC)
+// ----------------------------------------------------
+
+// Helper: Lookup user account from user_accounts database table
+function getUserAccount(identifier) {
+  if (!identifier) return null;
+  const cleanId = String(identifier).trim();
+  let user = db.prepare(`SELECT * FROM user_accounts WHERE lower(username) = lower(?)`).get(cleanId);
+  if (!user) {
+    user = db.prepare(`SELECT * FROM user_accounts WHERE lower(role) = lower(?) LIMIT 1`).get(cleanId);
+  }
+  // Backward compatibility aliases
+  if (!user) {
+    if (cleanId === 'procurement_manager') return getUserAccount('admin');
+    if (cleanId === 'status_updater') return getUserAccount('sar');
+  }
+  return user;
+}
+
+// Helper: Calculate permission matrix for a user profile
+function getUserPermissions(account) {
+  if (!account) return null;
+  const isLead = account.role === 'admin' || account.username === 'admin' || account.username === 'mas';
+  const isPurchaser = account.role === 'purchaser';
+  const isFinance = account.role === 'finance';
+  const isAudit = account.role === 'audit';
+  const isPlantEndUser = account.role === 'plant_enduser';
+  const isExecutive = account.role === 'executive';
+
+  return {
+    fullAccess: isLead,
+    canManagePasswords: isLead,
+    canAssignPurchaser: isLead, // direct reassignments without approval
+    canProposeTransfer: isPurchaser || isLead, // 2-way approval transfer
+    canUpdateStatus: isLead || isPurchaser, // purchasers update their own lines
+    canComment: isLead || isExecutive || isFinance || isAudit,
+    canViewAlerts: isLead || isExecutive || isAudit,
+    canViewAuditTrail: true,
+    canSync: isLead || isFinance, // both admin and finance can sync GDrive
+    canConfigSql: isLead,
+    canExport: true,
+    canViewCash: !isPlantEndUser && !isAudit, // hidden for plant end users and audit
+    canViewPricing: true, // confirmed visible for all profiles
+    isPurchaser: isPurchaser,
+    buyerCode: account.buyer_code || null,
+    plant: account.plant || null
+  };
+}
+
+// Middleware: Extract Authenticated User from Session Token
+function extractUser(req, res, next) {
+  try {
+    const authHeader = req.headers['authorization'] || '';
+    let token = '';
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    } else if (req.headers['x-auth-token']) {
+      token = String(req.headers['x-auth-token']).trim();
+    } else if (req.query && req.query.auth_token) {
+      token = String(req.query.auth_token).trim();
+    }
+
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+
+    const session = db.prepare(`
+      SELECT token, username, role, user_name, created_at, last_active 
+      FROM auth_sessions 
+      WHERE token = ?
+    `).get(token);
+
+    if (session) {
+      db.prepare(`UPDATE auth_sessions SET last_active = datetime('now', 'localtime') WHERE token = ?`).run(token);
+      const userAccount = getUserAccount(session.username || session.role);
+      if (!userAccount) {
+        req.user = null;
+        return next();
+      }
+
+      const permissions = getUserPermissions(userAccount);
+
+      req.user = {
+        token: session.token,
+        username: userAccount.username,
+        role: userAccount.role,
+        name: userAccount.name,
+        buyerCode: userAccount.buyer_code,
+        plant: userAccount.plant,
+        canEdit: Boolean(permissions.canUpdateStatus || permissions.canAssignPurchaser),
+        permissions
+      };
+    } else {
+      req.user = null;
+    }
+  } catch (err) {
+    console.error('Auth extraction error:', err);
+    req.user = null;
+  }
+  next();
+}
+
+// Middleware: Require Valid Authentication
+function requireAuth(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required. Please sign in.' });
+  }
+  next();
+}
+
+// Middleware: Require Admin / Lead Rights (Admin or Deputy Manager Mashhood)
+function requireAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required. Please sign in.' });
+  }
+  if (!req.user.permissions?.fullAccess) {
+    return res.status(403).json({ success: false, error: 'Permission denied. Admin / Lead access required.' });
+  }
+  next();
+}
+
+// Middleware: Require Status Updater Rights (Admin, Mashhood, or Purchasers)
+function requireStatusUpdater(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required. Please sign in.' });
+  }
+  if (!req.user.permissions?.canUpdateStatus) {
+    return res.status(403).json({ success: false, error: 'Permission denied. Status update access required.' });
+  }
+  next();
+}
+
+// Middleware: Require Direct Purchaser Assigner Rights (Admin or Mashhood)
+function requirePurchaserAssigner(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required. Please sign in.' });
+  }
+  if (!req.user.permissions?.canAssignPurchaser) {
+    return res.status(403).json({ success: false, error: 'Permission denied. Only Admin / Lead can assign purchasers directly.' });
+  }
+  next();
+}
+
+// Middleware: Require Executive or Admin Rights (for comments and executive alerts)
+function requireExecutiveOrAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required. Please sign in.' });
+  }
+  if (!req.user.permissions?.canComment && !req.user.permissions?.canViewAlerts && !req.user.permissions?.fullAccess) {
+    return res.status(403).json({ success: false, error: 'Permission denied. Executive or Admin rights required.' });
+  }
+  next();
+}
+
+// Middleware: Require Password Management Rights (Admin / Mashhood)
+function requirePasswordManager(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required. Please sign in.' });
+  }
+  if (!req.user.permissions?.canManagePasswords) {
+    return res.status(403).json({ success: false, error: 'Permission denied. User & password management requires Lead / Admin rights.' });
+  }
+  next();
+}
+
+// Middleware: Require Cash Settlement Access (Plant End-Users and Audit restricted)
+function requireCashAccess(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'Authentication required. Please sign in.' });
+  }
+  if (!req.user.permissions?.canViewCash) {
+    return res.status(403).json({ success: false, error: 'Access restricted. Financial tracking is not available for your role.' });
+  }
+  next();
+}
+
+const requireEditor = requireStatusUpdater;
+
+app.use(extractUser);
+
+// ----------------------------------------------------
+// AUTHENTICATION & USER MANAGEMENT ENDPOINTS
+// ----------------------------------------------------
+
+// POST /api/auth/login - Sign In with username or role
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { role, username, password } = req.body || {};
+    const identifier = username || role;
+    const account = getUserAccount(identifier);
+
+    if (!account) {
+      return res.status(400).json({ success: false, error: 'Invalid user account selected.' });
+    }
+
+    if (!password || String(password).trim() !== account.password) {
+      return res.status(401).json({ success: false, error: 'Incorrect password for ' + account.name });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    db.prepare(`
+      INSERT INTO auth_sessions (token, username, role, user_name, created_at, last_active)
+      VALUES (?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+    `).run(token, account.username, account.role, account.name);
+
+    const permissions = getUserPermissions(account);
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        username: account.username,
+        role: account.role,
+        name: account.name,
+        buyerCode: account.buyer_code,
+        plant: account.plant,
+        canEdit: Boolean(permissions.canUpdateStatus || permissions.canAssignPurchaser),
+        permissions: permissions
+      }
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/auth/me - Verify current session
+app.get('/api/auth/me', (req, res) => {
+  if (req.user) {
+    res.json({
+      success: true,
+      authenticated: true,
+      user: {
+        username: req.user.username,
+        role: req.user.role,
+        name: req.user.name,
+        buyerCode: req.user.buyerCode,
+        plant: req.user.plant,
+        canEdit: req.user.canEdit,
+        permissions: req.user.permissions
+      }
+    });
+  } else {
+    res.json({
+      success: true,
+      authenticated: false
+    });
+  }
+});
+
+// POST /api/auth/logout - End session
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    if (req.user && req.user.token) {
+      db.prepare(`DELETE FROM auth_sessions WHERE token = ?`).run(req.user.token);
+    }
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/auth/change-password - User changes their own password
+app.post('/api/auth/change-password', requireAuth, (req, res) => {
+  try {
+    const { current_password, new_password } = req.body || {};
+    if (!new_password || String(new_password).trim().length < 4) {
+      return res.status(400).json({ success: false, error: 'New password must be at least 4 characters long.' });
+    }
+
+    const currentAcc = db.prepare(`SELECT * FROM user_accounts WHERE username = ?`).get(req.user.username);
+    if (!currentAcc || currentAcc.password !== current_password) {
+      return res.status(401).json({ success: false, error: 'Current password is incorrect.' });
+    }
+
+    db.prepare(`
+      UPDATE user_accounts 
+      SET password = ?, updated_at = datetime('now', 'localtime') 
+      WHERE username = ?
+    `).run(String(new_password).trim(), req.user.username);
+
+    res.json({ success: true, message: 'Your password was changed successfully!' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/admin/users - List all accounts for Password Management Dashboard (Admin & Mashhood only)
+app.get('/api/admin/users', requirePasswordManager, (req, res) => {
+  try {
+    const users = db.prepare(`
+      SELECT username, role, name, buyer_code, plant, description, updated_at 
+      FROM user_accounts 
+      ORDER BY 
+        CASE 
+          WHEN username IN ('admin', 'mas') THEN 1 
+          WHEN role = 'purchaser' THEN 2 
+          WHEN role IN ('finance', 'audit') THEN 3 
+          WHEN role = 'plant_enduser' THEN 4 
+          ELSE 5 
+        END, name ASC
+    `).all();
+    res.json({ success: true, count: users.length, users });
+  } catch (err) {
+    console.error('Error fetching user accounts:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /api/admin/users/:username/password - Admin / Mashhood updates password for any account
+app.patch('/api/admin/users/:username/password', requirePasswordManager, (req, res) => {
+  try {
+    const { username } = req.params;
+    const { new_password } = req.body || {};
+
+    if (!new_password || String(new_password).trim().length < 4) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 4 characters long.' });
+    }
+
+    const targetUser = db.prepare(`SELECT * FROM user_accounts WHERE username = ?`).get(username);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: `User "${username}" not found.` });
+    }
+
+    db.prepare(`
+      UPDATE user_accounts 
+      SET password = ?, updated_at = datetime('now', 'localtime') 
+      WHERE username = ?
+    `).run(String(new_password).trim(), username);
+
+    // Audit log entry
+    const historyId = `HST-PWD-${Date.now()}`;
+    const nowLocalStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    db.prepare(`
+      INSERT INTO pr_status_history (
+        id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+      ) VALUES (?, 'ALL', 'SYSTEM', 'USER-MGMT', 0, 'Password Change', 'ACTIVE', 'UPDATED', ?, ?, ?, ?, ?, ?)
+    `).run(
+      historyId,
+      `Password updated for ${targetUser.name} (${username}) by ${req.user.name}`,
+      req.user.name,
+      nowLocalStr,
+      new Date().toISOString(),
+      req.user.username,
+      req.user.role
+    );
+
+    res.json({ success: true, message: `Password for ${targetUser.name} updated successfully!` });
+  } catch (err) {
+    console.error('Error updating password:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ----------------------------------------------------
+// LINE REASSIGNMENT WORKFLOW (PROPOSAL & ACCEPTANCE)
+// ----------------------------------------------------
+
+// POST /api/lines/:lineId/propose-transfer - Purchaser proposes transfer to another buyer
+app.post('/api/lines/:lineId/propose-transfer', requireAuth, (req, res) => {
+  try {
+    const { lineId } = req.params;
+    const { target_purchaser, reason_notes } = req.body || {};
+
+    if (!target_purchaser || !PURCHASER_CODES.includes(target_purchaser.toUpperCase())) {
+      return res.status(400).json({ success: false, error: 'Invalid target purchaser code.' });
+    }
+
+    const targetBuyer = target_purchaser.toUpperCase();
+    const currentLine = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
+    if (!currentLine) {
+      return res.status(404).json({ success: false, error: 'Line not found.' });
+    }
+
+    const currentBuyer = currentLine.assigned_vendor || getLineVendorGroup(currentLine);
+    const isManager = req.user.permissions?.fullAccess;
+
+    // Standard purchaser can only reassign lines assigned to themselves
+    if (!isManager && req.user.permissions?.isPurchaser) {
+      if (currentBuyer !== req.user.permissions?.buyerCode) {
+        return res.status(403).json({ success: false, error: 'You can only propose transfers for lines assigned to you.' });
+      }
+    }
+
+    if (targetBuyer === currentBuyer) {
+      return res.status(400).json({ success: false, error: `Line is already assigned to ${targetBuyer}.` });
+    }
+
+    const nowLocalStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestampUtc = new Date().toISOString();
+    const cleanNotes = (reason_notes || '').trim();
+
+    // Management bypass: Direct reassignment without requiring recipient acceptance
+    if (isManager) {
+      db.prepare(`
+        UPDATE pr_lines 
+        SET assigned_vendor = ?, proposed_vendor = NULL, transfer_status = 'accepted', updated_at = ? 
+        WHERE id = ?
+      `).run(targetBuyer, nowLocalStr, lineId);
+
+      const historyId = `HST-XFER-${lineId}-${Date.now()}`;
+      db.prepare(`
+        INSERT INTO pr_status_history (
+          id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        historyId,
+        currentLine.plant || 'CEPL',
+        lineId,
+        currentLine.pr_number,
+        currentLine.line_number,
+        currentLine.item_name,
+        currentLine.tracking_status || currentLine.po_status || 'Open order',
+        currentLine.tracking_status || currentLine.po_status || 'Open order',
+        `Direct reassignment by Management to ${targetBuyer}${cleanNotes ? ' | Note: ' + cleanNotes : ''}`,
+        req.user.name,
+        nowLocalStr,
+        timestampUtc,
+        req.user.username,
+        req.user.role
+      );
+
+      return res.json({
+        success: true,
+        immediate: true,
+        message: `Line directly reassigned to ${targetBuyer}.`
+      });
+    }
+
+    // Standard purchaser: Proposal requires recipient acceptance
+    db.prepare(`
+      UPDATE pr_lines 
+      SET proposed_vendor = ?, transfer_status = 'pending', transfer_requested_by = ?, transfer_requested_at = ?, updated_at = ? 
+      WHERE id = ?
+    `).run(targetBuyer, req.user.permissions?.buyerCode || req.user.name, nowLocalStr, nowLocalStr, lineId);
+
+    const historyId = `HST-PROP-${lineId}-${Date.now()}`;
+    db.prepare(`
+      INSERT INTO pr_status_history (
+        id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      historyId,
+      currentLine.plant || 'CEPL',
+      lineId,
+      currentLine.pr_number,
+      currentLine.line_number,
+      currentLine.item_name,
+      currentLine.tracking_status || currentLine.po_status || 'Open order',
+      currentLine.tracking_status || currentLine.po_status || 'Open order',
+      `Transfer to ${targetBuyer} proposed by ${req.user.name} (Awaiting acceptance)${cleanNotes ? ' | Reason: ' + cleanNotes : ''}`,
+      req.user.name,
+      nowLocalStr,
+      timestampUtc,
+      req.user.username,
+      req.user.role
+    );
+
+    res.json({
+      success: true,
+      pending: true,
+      message: `Transfer proposed to ${targetBuyer}. The line will transfer once accepted by ${targetBuyer}.`
+    });
+  } catch (err) {
+    console.error('Error proposing transfer:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/lines/:lineId/respond-transfer - Target purchaser accepts or declines
+app.post('/api/lines/:lineId/respond-transfer', requireAuth, (req, res) => {
+  try {
+    const { lineId } = req.params;
+    const { action, reason_notes } = req.body || {}; // action: 'accept' | 'decline'
+
+    if (!['accept', 'decline'].includes(action)) {
+      return res.status(400).json({ success: false, error: 'Action must be "accept" or "decline".' });
+    }
+
+    const currentLine = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
+    if (!currentLine) {
+      return res.status(404).json({ success: false, error: 'Line not found.' });
+    }
+
+    if (currentLine.transfer_status !== 'pending' || !currentLine.proposed_vendor) {
+      return res.status(400).json({ success: false, error: 'No pending transfer request found for this line.' });
+    }
+
+    const isTarget = currentLine.proposed_vendor === req.user.permissions?.buyerCode;
+    const isManager = req.user.permissions?.fullAccess;
+
+    if (!isTarget && !isManager) {
+      return res.status(403).json({ success: false, error: 'Only the proposed purchaser or management can respond to this transfer.' });
+    }
+
+    const nowLocalStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestampUtc = new Date().toISOString();
+    const cleanNotes = (reason_notes || '').trim();
+    const historyId = `HST-RESP-${lineId}-${Date.now()}`;
+
+    if (action === 'accept') {
+      const newBuyer = currentLine.proposed_vendor;
+      db.prepare(`
+        UPDATE pr_lines 
+        SET assigned_vendor = ?, proposed_vendor = NULL, transfer_status = 'accepted', updated_at = ? 
+        WHERE id = ?
+      `).run(newBuyer, nowLocalStr, lineId);
+
+      db.prepare(`
+        INSERT INTO pr_status_history (
+          id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        historyId,
+        currentLine.plant || 'CEPL',
+        lineId,
+        currentLine.pr_number,
+        currentLine.line_number,
+        currentLine.item_name,
+        currentLine.tracking_status || currentLine.po_status || 'Open order',
+        currentLine.tracking_status || currentLine.po_status || 'Open order',
+        `Transfer accepted by ${req.user.name}. Assigned purchaser is now ${newBuyer}.${cleanNotes ? ' | Note: ' + cleanNotes : ''}`,
+        req.user.name,
+        nowLocalStr,
+        timestampUtc,
+        req.user.username,
+        req.user.role
+      );
+
+      res.json({ success: true, message: `Line transfer accepted! You are now assigned to this line.` });
+    } else {
+      // Decline
+      db.prepare(`
+        UPDATE pr_lines 
+        SET proposed_vendor = NULL, transfer_status = 'declined', updated_at = ? 
+        WHERE id = ?
+      `).run(nowLocalStr, lineId);
+
+      db.prepare(`
+        INSERT INTO pr_status_history (
+          id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        historyId,
+        currentLine.plant || 'CEPL',
+        lineId,
+        currentLine.pr_number,
+        currentLine.line_number,
+        currentLine.item_name,
+        currentLine.tracking_status || currentLine.po_status || 'Open order',
+        currentLine.tracking_status || currentLine.po_status || 'Open order',
+        `Transfer declined by ${req.user.name}. Line remains assigned to ${currentLine.assigned_vendor || 'original buyer'}.${cleanNotes ? ' | Reason: ' + cleanNotes : ''}`,
+        req.user.name,
+        nowLocalStr,
+        timestampUtc,
+        req.user.username,
+        req.user.role
+      );
+
+      res.json({ success: true, message: `Line transfer declined. The line remains with the original purchaser.` });
+    }
+  } catch (err) {
+    console.error('Error responding to transfer:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/transfers/pending - Get pending incoming or outgoing transfers
+app.get('/api/transfers/pending', requireAuth, (req, res) => {
+  try {
+    const isManager = req.user.permissions?.fullAccess;
+    const buyerCode = req.user.permissions?.buyerCode;
+
+    let query = `
+      SELECT l.*, 
+             coalesce(l.assigned_vendor, '') as current_buyer,
+             l.proposed_vendor,
+             l.transfer_requested_by,
+             l.transfer_requested_at
+      FROM pr_lines l
+      WHERE l.transfer_status = 'pending' AND l.proposed_vendor IS NOT NULL
+    `;
+    const params = [];
+
+    if (!isManager && buyerCode) {
+      query += ` AND (l.proposed_vendor = ? OR l.assigned_vendor = ? OR l.transfer_requested_by = ?)`;
+      params.push(buyerCode, buyerCode, buyerCode);
+    }
+
+    query += ` ORDER BY l.transfer_requested_at DESC`;
+    const pendingTransfers = db.prepare(query).all(...params);
+
+    res.json({
+      success: true,
+      count: pendingTransfers.length,
+      incoming: pendingTransfers.filter(t => t.proposed_vendor === buyerCode),
+      outgoing: pendingTransfers.filter(t => t.transfer_requested_by === buyerCode),
+      all: pendingTransfers
+    });
+  } catch (err) {
+    console.error('Error fetching pending transfers:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ----------------------------------------------------
 // REST API ENDPOINTS
 // ----------------------------------------------------
 
 // 1. GET /api/prs - Consolidated PR Level List (Each PR listed exactly once, NO vendor name on main page!)
-app.get('/api/prs', (req, res) => {
+app.get('/api/prs', requireAuth, (req, res) => {
   try {
     const { search, status, plant, po_filter, manual_only, vendor_group } = req.query;
 
     let query = `SELECT * FROM pr_lines WHERE 1=1`;
     const queryParams = [];
 
-    if (plant && plant !== 'All') {
+    // Enforce plant filter if user is plant-isolated
+    const userPlant = req.user?.permissions?.plant;
+    const effectivePlant = userPlant ? userPlant : (plant && plant !== 'All' ? plant : null);
+    if (effectivePlant) {
       query += ` AND plant = ?`;
-      queryParams.push(plant);
+      queryParams.push(effectivePlant);
     }
 
     if (po_filter === 'with_po') {
@@ -247,7 +1128,18 @@ app.get('/api/prs', (req, res) => {
 
     query += ` ORDER BY pr_number ASC, line_number ASC`;
 
-    const allLines = db.prepare(query).all(...queryParams);
+    let allLines = db.prepare(query).all(...queryParams);
+
+    // If purchaser profile, strictly isolate lines to this purchaser
+    const isPurchaser = req.user?.permissions?.isPurchaser;
+    const buyerCode = req.user?.permissions?.buyerCode;
+    if (isPurchaser && buyerCode) {
+      allLines = allLines.filter(l => {
+        const grp = getLineVendorGroup(l);
+        return grp === buyerCode || l.assigned_vendor === buyerCode || l.proposed_vendor === buyerCode;
+      });
+    }
+
     const manualPrSet = getManuallyUpdatedPrNumbers();
 
     // Group lines by PR Number
@@ -258,6 +1150,14 @@ app.get('/api/prs', (req, res) => {
       }
       prGroups.get(line.pr_number).push(line);
     }
+
+    const commentsCountMap = new Map();
+    try {
+      const cRows = db.prepare(`SELECT pr_number, count(*) as cnt FROM comments GROUP BY pr_number`).all();
+      for (const r of cRows) {
+        if (r.pr_number) commentsCountMap.set(r.pr_number, r.cnt);
+      }
+    } catch (e) {}
 
     const prSummaries = [];
     const today = new Date().toISOString().split('T')[0];
@@ -273,10 +1173,16 @@ app.get('/api/prs', (req, res) => {
       let pendingLines = 0;
       let linesWithPo = 0;
       let linesWithoutPo = 0;
+      let plannedAmount = 0;
+      let totalPurchQty = 0;
 
       for (const l of lines) {
         const pQty = Number(l.purch_qty) || 0;
         const rQty = Number(l.received_qty) || 0;
+        const price = Number(l.purchase_price) || 0;
+
+        totalPurchQty += pQty;
+        plannedAmount += (price * pQty);
 
         if (l.po_number && l.po_number.trim() !== '') {
           linesWithPo++;
@@ -294,9 +1200,12 @@ app.get('/api/prs', (req, res) => {
       }
 
       const generalStatus = computeGeneralPrStatus(lines);
+      const lifecycleStage = computePrLifecycleStage(lines);
 
       // Milestone dates
       const poDates = lines.map(l => l.po_create_date).filter(Boolean).sort();
+      const appDates = lines.map(l => l.pr_approve_date).filter(Boolean).sort();
+      const crtDates = lines.map(l => l.pr_create_date).filter(Boolean).sort();
       const expectedDates = lines.map(l => l.expected_dlv_date).filter(Boolean).sort();
       const grnDates = lines.map(l => l.last_grn_date).filter(Boolean).sort();
       const invoiceDates = lines.map(l => l.last_invoice_date).filter(Boolean).sort();
@@ -318,6 +1227,10 @@ app.get('/api/prs', (req, res) => {
         has_po: distinctPOs.length > 0,
         remarks: distinctRemarks.join(' | ') || '',
         general_status: generalStatus,
+        lifecycle_stage: lifecycleStage,
+        planned_amount: Math.round(plannedAmount),
+        total_purch_qty: Math.round(totalPurchQty),
+        comments_count: commentsCountMap.get(prNumber) || 0,
         is_active: isActive,
         is_invoiced: isInvoiced,
         is_pre_approval: isPreApprovalOrCancelled,
@@ -332,6 +1245,8 @@ app.get('/api/prs', (req, res) => {
         pending_lines: pendingLines,
         delivery_completion_pct: totalLines > 0 ? Math.round((fullyDeliveredLines / totalLines) * 100) : 0,
         po_create_date: poDates[0] || '',
+        pr_approve_date: appDates[appDates.length - 1] || '',
+        pr_create_date: crtDates[crtDates.length - 1] || '',
         expected_dlv_date: earliestExpected,
         last_grn_date: grnDates[grnDates.length - 1] || '',
         last_invoice_date: invoiceDates[invoiceDates.length - 1] || '',
@@ -348,9 +1263,15 @@ app.get('/api/prs', (req, res) => {
       }
 
       if (search) {
-        const q = search.toLowerCase();
+        const q = search.trim().toLowerCase();
+        const prDigitsMatch = q.match(/^(?:pr[-#\s]*)?(\d+)$/i);
+        const prDigits = prDigitsMatch ? prDigitsMatch[1] : null;
+        const prPadded = prDigits ? prDigits.padStart(6, '0') : null;
+
         const matches =
           summary.pr_number.toLowerCase().includes(q) ||
+          (prDigits && summary.pr_number.replace(/\D/g, '').endsWith(prDigits)) ||
+          (prPadded && summary.pr_number.includes(prPadded)) ||
           summary.po_number.toLowerCase().includes(q) ||
           summary.remarks.toLowerCase().includes(q) ||
           lines.some(l => (l.item_name && l.item_name.toLowerCase().includes(q)) || (l.item_id && l.item_id.toLowerCase().includes(q)));
@@ -380,6 +1301,16 @@ app.get('/api/prs', (req, res) => {
       prSummaries.push(summary);
     }
 
+    // Default Sorting: Newest PR Approval Date first, then fallback to PO Date / PR Number
+    prSummaries.sort((a, b) => {
+      const dateA = a.pr_approve_date || a.po_create_date || '';
+      const dateB = b.pr_approve_date || b.po_create_date || '';
+      if (dateB !== dateA) {
+        return dateB.localeCompare(dateA);
+      }
+      return b.pr_number.localeCompare(a.pr_number);
+    });
+
     res.json({ success: true, count: prSummaries.length, data: prSummaries });
   } catch (err) {
     console.error('Error in GET /api/prs:', err);
@@ -387,32 +1318,189 @@ app.get('/api/prs', (req, res) => {
   }
 });
 
+// 1b. GET /api/lines/pending-po - Dedicated Line-Level View for PR Lines without PO
+app.get('/api/lines/pending-po', requireAuth, (req, res) => {
+  try {
+    const { plant, buyer, search, sort = 'oldest', status = 'active' } = req.query;
+
+    let baseQuery = `
+      SELECT l.* 
+      FROM pr_lines l
+      WHERE (l.po_number IS NULL OR trim(l.po_number) = '')
+    `;
+    const params = [];
+
+    // Filter by plant
+    const userPlant = req.user?.permissions?.plant;
+    const effectivePlant = userPlant ? userPlant : (plant && plant !== 'All' ? plant : null);
+    if (effectivePlant) {
+      baseQuery += ` AND l.plant = ?`;
+      params.push(effectivePlant);
+    }
+
+    // Filter by status
+    if (status === 'approved') {
+      baseQuery += ` AND l.prl_status = 'Approved'`;
+    } else if (status === 'preapproval') {
+      baseQuery += ` AND l.prl_status IN ('Draft', 'InReview')`;
+    } else if (status === 'active') {
+      // Active approved or in-process lines (exclude rejected & cancelled)
+      baseQuery += ` AND (l.prl_status IS NULL OR l.prl_status NOT IN ('Rejected', 'Cancelled'))`;
+    }
+
+    // Filter by buyer
+    const isPurchaser = req.user?.permissions?.isPurchaser;
+    const userBuyer = req.user?.permissions?.buyerCode;
+    const effectiveBuyer = (isPurchaser && userBuyer) ? userBuyer : buyer;
+
+    if (effectiveBuyer && effectiveBuyer !== 'ALL' && effectiveBuyer !== 'All') {
+      if (effectiveBuyer === 'UNASSIGNED') {
+        baseQuery += ` AND (l.assigned_vendor IS NULL OR trim(l.assigned_vendor) = '' OR l.assigned_vendor = 'NONE')`;
+      } else {
+        baseQuery += ` AND (UPPER(l.assigned_vendor) = ? OR UPPER(coalesce(l.proposed_vendor, '')) = ?)`;
+        params.push(effectiveBuyer.toUpperCase(), effectiveBuyer.toUpperCase());
+      }
+    }
+
+    // Search filter
+    if (search && search.trim()) {
+      const term = `%${search.trim().toLowerCase()}%`;
+      baseQuery += ` AND (
+        lower(l.pr_number) LIKE ? OR
+        lower(l.item_name) LIKE ? OR
+        lower(coalesce(l.item_id, '')) LIKE ? OR
+        lower(coalesce(l.remarks, '')) LIKE ? OR
+        lower(coalesce(l.status_remarks, '')) LIKE ? OR
+        lower(coalesce(l.assigned_vendor, '')) LIKE ?
+      )`;
+      params.push(term, term, term, term, term, term);
+    }
+
+    // Sorting
+    if (sort === 'newest') {
+      baseQuery += ` ORDER BY COALESCE(NULLIF(l.expected_dlv_date, ''), '1970-01-01') DESC, l.pr_number DESC, l.line_number ASC`;
+    } else if (sort === 'pr_number') {
+      baseQuery += ` ORDER BY l.pr_number ASC, l.line_number ASC`;
+    } else if (sort === 'qty_desc') {
+      baseQuery += ` ORDER BY l.purch_qty DESC, l.pr_number ASC`;
+    } else if (sort === 'item_name') {
+      baseQuery += ` ORDER BY l.item_name ASC`;
+    } else {
+      // Default: oldest PR creation/approval date first (Urgent!)
+      baseQuery += ` ORDER BY CASE WHEN l.expected_dlv_date IS NULL OR trim(l.expected_dlv_date) = '' THEN 1 ELSE 0 END, l.expected_dlv_date ASC, l.pr_number ASC, l.line_number ASC`;
+    }
+
+    const lines = db.prepare(baseQuery).all(...params);
+
+    // Calculate summary statistics across all pending lines for this plant / purchaser
+    let statsQuery = `
+      SELECT 
+        COUNT(*) as total_count,
+        SUM(CASE WHEN assigned_vendor IS NULL OR trim(assigned_vendor) = '' OR assigned_vendor = 'NONE' THEN 1 ELSE 0 END) as unassigned_count,
+        SUM(CASE WHEN assigned_vendor IS NOT NULL AND trim(assigned_vendor) != '' AND assigned_vendor != 'NONE' THEN 1 ELSE 0 END) as assigned_count
+      FROM pr_lines
+      WHERE (po_number IS NULL OR trim(po_number) = '')
+        AND (prl_status IS NULL OR prl_status NOT IN ('Rejected', 'Cancelled'))
+    `;
+    const statsParams = [];
+    if (effectivePlant) {
+      statsQuery += ` AND plant = ?`;
+      statsParams.push(effectivePlant);
+    }
+    if (isPurchaser && userBuyer) {
+      statsQuery += ` AND (UPPER(assigned_vendor) = ? OR UPPER(coalesce(proposed_vendor, '')) = ?)`;
+      statsParams.push(userBuyer.toUpperCase(), userBuyer.toUpperCase());
+    }
+    const stats = db.prepare(statsQuery).get(...statsParams) || { total_count: 0, unassigned_count: 0, assigned_count: 0 };
+
+    for (const l of lines) {
+      l.lifecycle_stage = computeLineLifecycleStage(l);
+      l.line_amount = Math.round((Number(l.purchase_price) || 0) * (Number(l.purch_qty) || 0));
+    }
+
+    res.json({
+      success: true,
+      counts: {
+        total: stats.total_count || 0,
+        unassigned: stats.unassigned_count || 0,
+        assigned: stats.assigned_count || 0,
+        filtered: lines.length
+      },
+      lines
+    });
+  } catch (err) {
+    console.error('Error in GET /api/lines/pending-po:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 2. GET /api/prs/:prNumber - Get Detailed Lines for a Specific PR
-app.get('/api/prs/:prNumber', (req, res) => {
+app.get('/api/prs/:prNumber', requireAuth, (req, res) => {
   try {
     const { prNumber } = req.params;
-    const lines = db.prepare(`SELECT * FROM pr_lines WHERE pr_number = ? ORDER BY line_number ASC`).all(prNumber);
+    let lines = db.prepare(`SELECT * FROM pr_lines WHERE pr_number = ? ORDER BY line_number ASC`).all(prNumber);
 
     if (!lines || lines.length === 0) {
       return res.status(404).json({ success: false, error: `PR ${prNumber} not found` });
     }
 
-    // Attach history count for each line
-    const historyStmt = db.prepare(`SELECT * FROM pr_status_history WHERE line_id = ? ORDER BY changed_at DESC`);
+    // Plant-level security check
+    const userPlant = req.user?.permissions?.plant;
+    if (userPlant && lines[0]?.plant !== userPlant) {
+      return res.status(403).json({ success: false, error: `Access restricted. PR belongs to plant ${lines[0]?.plant}.` });
+    }
+
+    // Purchaser-level security check
+    const isPurchaser = req.user?.permissions?.isPurchaser;
+    const buyerCode = req.user?.permissions?.buyerCode;
+    if (isPurchaser && buyerCode) {
+      lines = lines.filter(l => {
+        const grp = getLineVendorGroup(l);
+        return grp === buyerCode || l.assigned_vendor === buyerCode || l.proposed_vendor === buyerCode;
+      });
+      if (lines.length === 0) {
+        return res.status(403).json({ success: false, error: `Access restricted. No line items in PR ${prNumber} are assigned to you.` });
+      }
+    }
+
+    // Attach comments for this PR and lines
+    let prComments = [];
+    try {
+      prComments = db.prepare(`SELECT * FROM comments WHERE pr_number = ? ORDER BY created_at_utc ASC`).all(prNumber);
+    } catch (e) {}
+
+    const commentsByLine = new Map();
+    for (const c of prComments) {
+      if (c.line_id) {
+        if (!commentsByLine.has(c.line_id)) commentsByLine.set(c.line_id, []);
+        commentsByLine.get(c.line_id).push(c);
+      }
+    }
+
+    // Attach history count and lifecycle stage for each line
+    const historyStmt = db.prepare(`SELECT * FROM pr_status_history WHERE line_id = ? ORDER BY COALESCE(timestamp_utc, changed_at) DESC`);
     for (const l of lines) {
       l.status_history = historyStmt.all(l.id);
       l.history_count = l.status_history.length;
       if (!l.tracking_status) l.tracking_status = l.po_status;
+      l.lifecycle_stage = computeLineLifecycleStage(l);
+      l.line_amount = Math.round((Number(l.purchase_price) || 0) * (Number(l.purch_qty) || 0));
+      l.comments = commentsByLine.get(l.id) || [];
+      l.comments_count = l.comments.length;
     }
 
     const generalStatus = computeGeneralPrStatus(lines);
+    const lifecycleStage = computePrLifecycleStage(lines);
 
     res.json({
       success: true,
       pr_number: prNumber,
       plant: lines[0]?.plant || 'CEPL',
       general_status: generalStatus,
+      lifecycle_stage: lifecycleStage,
       total_lines: lines.length,
+      comments: prComments,
+      comments_count: prComments.length,
       lines: lines
     });
   } catch (err) {
@@ -422,7 +1510,7 @@ app.get('/api/prs/:prNumber', (req, res) => {
 });
 
 // 3. GET /api/lines/:lineId/history - Evolution of a Single Line Over Time
-app.get('/api/lines/:lineId/history', (req, res) => {
+app.get('/api/lines/:lineId/history', requireAuth, (req, res) => {
   try {
     const { lineId } = req.params;
     const line = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
@@ -438,7 +1526,7 @@ app.get('/api/lines/:lineId/history', (req, res) => {
 });
 
 // 4. GET /api/prs/:prNumber/history - Evolution of an entire PR across all its lines
-app.get('/api/prs/:prNumber/history', (req, res) => {
+app.get('/api/prs/:prNumber/history', requireAuth, (req, res) => {
   try {
     const { prNumber } = req.params;
     const history = db.prepare(`SELECT * FROM pr_status_history WHERE pr_number = ? ORDER BY changed_at DESC`).all(prNumber);
@@ -448,11 +1536,11 @@ app.get('/api/prs/:prNumber/history', (req, res) => {
   }
 });
 
-// 5. PATCH /api/lines/:lineId/status - Update Status & Remarks (The ONLY editable field!)
-app.patch('/api/lines/:lineId/status', (req, res) => {
+// 5. PATCH /api/lines/:lineId/status - Update Status & Remarks (The ONLY operational line status field)
+app.patch('/api/lines/:lineId/status', requireStatusUpdater, (req, res) => {
   try {
     const { lineId } = req.params;
-    const { new_status, reason_notes, changed_by } = req.body;
+    const { new_status, reason_notes } = req.body;
 
     if (!new_status || !new_status.trim()) {
       return res.status(400).json({ success: false, error: 'Status is required' });
@@ -463,24 +1551,39 @@ app.patch('/api/lines/:lineId/status', (req, res) => {
       return res.status(404).json({ success: false, error: 'Line not found' });
     }
 
+    // Standard purchaser can only update their own lines
+    const isPurchaser = req.user?.permissions?.isPurchaser;
+    const buyerCode = req.user?.permissions?.buyerCode;
+    if (isPurchaser && buyerCode) {
+      const lineBuyer = currentLine.assigned_vendor || getLineVendorGroup(currentLine);
+      if (lineBuyer !== buyerCode) {
+        return res.status(403).json({ success: false, error: `You can only update status for lines assigned to you (${buyerCode}). This line is assigned to ${lineBuyer || 'Unassigned'}.` });
+      }
+    }
+
+    // SERVER-CONTROLLED IMMUTABLE AUDIT LOG FIELDS (NOT OVERRIDDEN BY CLIENT)
     const previousStatus = currentLine.tracking_status || currentLine.po_status || 'Open order';
     const cleanNewStatus = new_status.trim();
     const cleanNotes = (reason_notes || '').trim();
-    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const nowLocalStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestampUtc = new Date().toISOString();
+    const userId = req.user?.username || req.user?.role || 'user';
+    const userRole = req.user?.role || 'purchaser';
+    const authorName = req.user?.name || 'Purchasing Officer';
 
     // Update tracking_status and status_remarks in pr_lines
     db.prepare(`
       UPDATE pr_lines
       SET tracking_status = ?, status_remarks = ?, updated_at = ?
       WHERE id = ?
-    `).run(cleanNewStatus, cleanNotes, nowStr, lineId);
+    `).run(cleanNewStatus, cleanNotes, nowLocalStr, lineId);
 
-    // Insert into pr_status_history
+    // Insert into pr_status_history (strictly append-only, immutable record)
     const historyId = `HST-${lineId}-${Date.now()}`;
     db.prepare(`
       INSERT INTO pr_status_history (
-        id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       historyId,
       currentLine.plant || 'CEPL',
@@ -491,12 +1594,15 @@ app.patch('/api/lines/:lineId/status', (req, res) => {
       previousStatus,
       cleanNewStatus,
       cleanNotes || `Status updated from "${previousStatus}" to "${cleanNewStatus}"`,
-      changed_by || 'Purchasing Officer',
-      nowStr
+      authorName,
+      nowLocalStr,
+      timestampUtc,
+      userId,
+      userRole
     );
 
     const updatedLine = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
-    const updatedHistory = db.prepare(`SELECT * FROM pr_status_history WHERE line_id = ? ORDER BY changed_at DESC`).all(lineId);
+    const updatedHistory = db.prepare(`SELECT * FROM pr_status_history WHERE line_id = ? ORDER BY COALESCE(timestamp_utc, changed_at) DESC`).all(lineId);
 
     res.json({
       success: true,
@@ -510,8 +1616,8 @@ app.patch('/api/lines/:lineId/status', (req, res) => {
   }
 });
 
-// 5b. PATCH /api/lines/:lineId/assigned-vendor - Update Assigned Vendor (3 letters)
-app.patch('/api/lines/:lineId/assigned-vendor', (req, res) => {
+// 5b. PATCH /api/lines/:lineId/assigned-vendor - Update Assigned Vendor (3 letters, strictly restricted to Admin / Lead)
+app.patch('/api/lines/:lineId/assigned-vendor', requirePurchaserAssigner, (req, res) => {
   try {
     const { lineId } = req.params;
     const { assigned_vendor } = req.body;
@@ -522,20 +1628,25 @@ app.patch('/api/lines/:lineId/assigned-vendor', (req, res) => {
     }
 
     const cleanVendor = (assigned_vendor || '').trim().toUpperCase().substring(0, 3);
-    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const nowLocalStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestampUtc = new Date().toISOString();
+    const userId = req.user?.role || 'admin';
+    const userRole = req.user?.role || 'admin';
+    const authorName = req.user?.name || 'Admin / Lead';
 
     db.prepare(`
       UPDATE pr_lines
       SET assigned_vendor = ?, updated_at = ?
       WHERE id = ?
-    `).run(cleanVendor, nowStr, lineId);
+    `).run(cleanVendor, nowLocalStr, lineId);
 
-    // Record in status history
+    // Record in status history (strictly immutable)
     const historyId = `HST-${lineId}-${Date.now()}`;
+    const previousStatus = currentLine.tracking_status || currentLine.po_status || 'Open order';
     db.prepare(`
       INSERT INTO pr_status_history (
-        id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       historyId,
       currentLine.plant || 'CEPL',
@@ -543,11 +1654,14 @@ app.patch('/api/lines/:lineId/assigned-vendor', (req, res) => {
       currentLine.pr_number,
       currentLine.line_number,
       currentLine.item_name,
-      currentLine.tracking_status || currentLine.po_status,
-      currentLine.tracking_status || currentLine.po_status,
-      `Assigned vendor set to: ${cleanVendor || 'Unassigned'}`,
-      'Purchasing Officer',
-      nowStr
+      previousStatus,
+      previousStatus,
+      `Assigned purchaser set to: ${cleanVendor || 'Unassigned'}`,
+      authorName,
+      nowLocalStr,
+      timestampUtc,
+      userId,
+      userRole
     );
 
     const updatedLine = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
@@ -562,10 +1676,159 @@ app.patch('/api/lines/:lineId/assigned-vendor', (req, res) => {
   }
 });
 
-// 5c. POST /api/lines/bulk-status - Bulk Update Status, Remarks, and/or Assigned Vendor for Multiple Lines
-app.post('/api/lines/bulk-status', (req, res) => {
+// 5c. POST /api/lines/:lineId/urgency - Plant End-User or Management sets urgency level ('Normal' | 'Urgent' | 'Critical')
+app.post('/api/lines/:lineId/urgency', requireAuth, (req, res) => {
   try {
-    const { line_ids, new_status, assigned_vendor, reason_notes, changed_by } = req.body;
+    const { lineId } = req.params;
+    const { urgency_level, notes } = req.body || {};
+
+    const validLevels = ['Normal', 'Urgent', 'Critical'];
+    if (!validLevels.includes(urgency_level)) {
+      return res.status(400).json({ success: false, error: 'Urgency level must be one of: Normal, Urgent, Critical.' });
+    }
+
+    const currentLine = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
+    if (!currentLine) {
+      return res.status(404).json({ success: false, error: 'Line not found.' });
+    }
+
+    // Auth check: Plant End-User matching plant, or Procurement Manager (admin or mas)
+    const isPlantUser = req.user.role === 'plant_enduser' && req.user.plant === currentLine.plant;
+    const isManager = req.user.permissions?.fullAccess;
+
+    if (!isPlantUser && !isManager) {
+      return res.status(403).json({
+        success: false,
+        error: `Permission denied. Only ${currentLine.plant} plant end-users or procurement managers can assign urgency to this line.`
+      });
+    }
+
+    const previousUrgency = currentLine.urgency_level || 'Normal';
+    const nowLocalStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestampUtc = new Date().toISOString();
+    const cleanNotes = (notes || '').trim();
+    const historyId = `HST-URG-${lineId}-${Date.now()}`;
+
+    db.prepare(`
+      UPDATE pr_lines
+      SET urgency_level = ?, urgency_set_by = ?, urgency_set_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(urgency_level, req.user.name, nowLocalStr, nowLocalStr, lineId);
+
+    // Record in immutable pr_status_history
+    db.prepare(`
+      INSERT INTO pr_status_history (
+        id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      historyId,
+      currentLine.plant || 'CEPL',
+      lineId,
+      currentLine.pr_number,
+      currentLine.line_number,
+      currentLine.item_name,
+      currentLine.tracking_status || currentLine.po_status || 'Open order',
+      currentLine.tracking_status || currentLine.po_status || 'Open order',
+      `Urgency updated: [${previousUrgency}] → [${urgency_level}] by ${req.user.name} (${req.user.role}).${cleanNotes ? ' | Note: ' + cleanNotes : ''}`,
+      req.user.name,
+      nowLocalStr,
+      timestampUtc,
+      req.user.username,
+      req.user.role
+    );
+
+    const updatedLine = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
+    res.json({
+      success: true,
+      message: `Urgency level set to "${urgency_level}".`,
+      urgency_level,
+      line: updatedLine
+    });
+  } catch (err) {
+    console.error('Error updating urgency:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5d. PATCH /api/lines/:lineId/expected-delivery-date - Assigned Purchaser or Management updates expected delivery date
+app.patch('/api/lines/:lineId/expected-delivery-date', requireAuth, (req, res) => {
+  try {
+    const { lineId } = req.params;
+    const { expected_dlv_date, reason } = req.body || {};
+
+    if (!expected_dlv_date || typeof expected_dlv_date !== 'string') {
+      return res.status(400).json({ success: false, error: 'A valid expected delivery date string (YYYY-MM-DD) is required.' });
+    }
+
+    const currentLine = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
+    if (!currentLine) {
+      return res.status(404).json({ success: false, error: 'Line not found.' });
+    }
+
+    // Auth check: Must be assigned purchaser (buyerCode === assigned_vendor or default vendor group) or Management
+    const effectiveBuyer = (currentLine.assigned_vendor || getLineVendorGroup(currentLine) || '').trim().toUpperCase();
+    const userBuyer = (req.user.buyerCode || '').trim().toUpperCase();
+    const isAssigned = req.user.role === 'purchaser' && userBuyer && userBuyer === effectiveBuyer;
+    const isManager = req.user.permissions?.fullAccess;
+
+    if (!isAssigned && !isManager) {
+      return res.status(403).json({
+        success: false,
+        error: `Permission denied. Only the assigned purchaser (${effectiveBuyer || 'unassigned'}) or procurement management can edit the expected delivery date.`
+      });
+    }
+
+    const previousDate = currentLine.expected_dlv_date || 'None';
+    const nowLocalStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestampUtc = new Date().toISOString();
+    const cleanReason = (reason || '').trim();
+    const historyId = `HST-EDD-${lineId}-${Date.now()}`;
+
+    db.prepare(`
+      UPDATE pr_lines
+      SET expected_dlv_date = ?, updated_at = ?
+      WHERE id = ?
+    `).run(expected_dlv_date, nowLocalStr, lineId);
+
+    // Record in immutable pr_status_history
+    db.prepare(`
+      INSERT INTO pr_status_history (
+        id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      historyId,
+      currentLine.plant || 'CEPL',
+      lineId,
+      currentLine.pr_number,
+      currentLine.line_number,
+      currentLine.item_name,
+      currentLine.tracking_status || currentLine.po_status || 'Open order',
+      currentLine.tracking_status || currentLine.po_status || 'Open order',
+      `Expected Delivery Date revised: [${previousDate}] → [${expected_dlv_date}] by ${req.user.name}.${cleanReason ? ' | Reason: ' + cleanReason : ''}`,
+      req.user.name,
+      nowLocalStr,
+      timestampUtc,
+      req.user.username,
+      req.user.role
+    );
+
+    const updatedLine = db.prepare(`SELECT * FROM pr_lines WHERE id = ?`).get(lineId);
+    res.json({
+      success: true,
+      message: `Expected delivery date updated to ${expected_dlv_date}.`,
+      expected_dlv_date,
+      line: updatedLine
+    });
+  } catch (err) {
+    console.error('Error updating expected delivery date:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5e. POST /api/lines/bulk-status - Bulk Update Status, Remarks, and/or Assigned Vendor
+app.post('/api/lines/bulk-status', requireStatusUpdater, (req, res) => {
+  try {
+    const { line_ids, new_status, assigned_vendor, reason_notes } = req.body;
 
     if (!Array.isArray(line_ids) || line_ids.length === 0) {
       return res.status(400).json({ success: false, error: 'line_ids must be a non-empty array' });
@@ -574,10 +1837,19 @@ app.post('/api/lines/bulk-status', (req, res) => {
     const cleanNewStatus = new_status && new_status.trim() ? new_status.trim() : null;
     const cleanVendor = assigned_vendor !== undefined && assigned_vendor !== null && assigned_vendor !== ''
       ? (assigned_vendor === '__UNASSIGN__' ? '' : assigned_vendor.trim().toUpperCase().substring(0, 3))
-      : null; // null means keep unchanged
+      : null;
+
+    // Check role permission if attempting to reassign purchaser
+    if (cleanVendor !== null && !req.user?.permissions?.canAssignPurchaser) {
+      return res.status(403).json({ success: false, error: 'Permission denied. Only Admin / Lead can assign purchasers in bulk.' });
+    }
+
     const cleanNotes = (reason_notes || '').trim();
-    const author = changed_by || 'Purchasing Officer';
-    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const authorName = req.user?.name || 'Status Updater';
+    const userId = req.user?.role || 'status_updater';
+    const userRole = req.user?.role || 'status_updater';
+    const nowLocalStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestampUtc = new Date().toISOString();
 
     if (!cleanNewStatus && cleanVendor === null && !cleanNotes) {
       return res.status(400).json({ success: false, error: 'Please provide at least a new status, assigned vendor, or remarks to update' });
@@ -598,8 +1870,8 @@ app.post('/api/lines/bulk-status', (req, res) => {
       `);
       const insertHistoryStmt = db.prepare(`
         INSERT INTO pr_status_history (
-          id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, plant, line_id, pr_number, line_number, item_name, previous_status, new_status, reason_notes, changed_by, changed_at, timestamp_utc, user_id, user_role
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (let i = 0; i < line_ids.length; i++) {
@@ -616,7 +1888,7 @@ app.post('/api/lines/bulk-status', (req, res) => {
           noteParts.push(`Status changed to "${cleanNewStatus}"`);
         }
         if (cleanVendor !== null && cleanVendor !== currentLine.assigned_vendor) {
-          noteParts.push(`Assigned vendor set to "${cleanVendor || 'Unassigned'}"`);
+          noteParts.push(`Assigned purchaser set to "${cleanVendor || 'Unassigned'}"`);
         }
         if (cleanNotes) {
           noteParts.push(cleanNotes);
@@ -629,7 +1901,7 @@ app.post('/api/lines/bulk-status', (req, res) => {
           cleanVendor,
           cleanNotes,
           cleanNotes,
-          nowStr,
+          nowLocalStr,
           lineId
         );
 
@@ -645,8 +1917,11 @@ app.post('/api/lines/bulk-status', (req, res) => {
           previousStatus,
           targetStatus,
           combinedNotes,
-          author,
-          nowStr
+          authorName,
+          nowLocalStr,
+          timestampUtc,
+          userId,
+          userRole
         );
 
         updatedLines.push(lineId);
@@ -670,18 +1945,280 @@ app.post('/api/lines/bulk-status', (req, res) => {
   }
 });
 
+// 5d. GET /api/comments - Fetch Comments for a PR or Line Item
+app.get('/api/comments', requireAuth, (req, res) => {
+  try {
+    const { pr_number, line_id } = req.query;
+    let query = `SELECT * FROM comments WHERE 1=1`;
+    const params = [];
+
+    if (line_id) {
+      query += ` AND line_id = ?`;
+      params.push(line_id);
+    } else if (pr_number) {
+      query += ` AND pr_number = ?`;
+      params.push(pr_number);
+    }
+
+    query += ` ORDER BY created_at_utc ASC`;
+    const comments = db.prepare(query).all(...params);
+    res.json({ success: true, count: comments.length, comments });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5e. POST /api/comments - Add Comment (Strictly Executive Leadership & Admin only)
+app.post('/api/comments', requireExecutiveOrAdmin, (req, res) => {
+  try {
+    const { entity_type = 'PR', pr_number, line_id, comment_text } = req.body;
+
+    if (!comment_text || !comment_text.trim()) {
+      return res.status(400).json({ success: false, error: 'Comment text is required.' });
+    }
+    if (!pr_number && !line_id) {
+      return res.status(400).json({ success: false, error: 'PR number or Line ID is required.' });
+    }
+
+    const commentId = `CMT-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const nowUtc = new Date().toISOString();
+    const nowLocal = nowUtc.replace('T', ' ').substring(0, 19);
+
+    db.prepare(`
+      INSERT INTO comments (
+        id, entity_type, entity_id, pr_number, line_id, author_id, author_name, author_role, comment_text, created_at_utc, created_at_local
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      commentId,
+      entity_type,
+      line_id || pr_number,
+      pr_number || '',
+      line_id || null,
+      req.user.role,
+      req.user.name,
+      req.user.role,
+      comment_text.trim(),
+      nowUtc,
+      nowLocal
+    );
+
+    const inserted = db.prepare(`SELECT * FROM comments WHERE id = ?`).get(commentId);
+    res.json({ success: true, comment: inserted });
+  } catch (err) {
+    console.error('Error posting comment:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5f. GET /api/executive/alerts - Automated Threshold Alerts for Executive Leadership & Admin
+app.get('/api/executive/alerts', requireAuth, (req, res) => {
+  try {
+    const plant = req.query.plant || 'All';
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    // 1. Severely Overdue Active Deliveries (>14 days past expected dlv date)
+    const overdueCount = db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM pr_lines l
+      WHERE l.expected_dlv_date IS NOT NULL 
+        AND l.expected_dlv_date != '' 
+        AND l.expected_dlv_date < ?
+        AND l.received_qty < l.purch_qty
+        AND (l.po_status NOT IN ('Cancelled') AND (l.tracking_status IS NULL OR l.tracking_status NOT LIKE '%cancel%'))
+        AND (? = 'All' OR l.plant = ?)
+    `).get(fourteenDaysAgo, plant, plant).cnt;
+
+    const overdueLines = db.prepare(`
+      SELECT l.*, (l.purch_qty - l.received_qty) as remaining_qty,
+             CAST(ROUND(julianday('now') - julianday(l.expected_dlv_date)) AS INTEGER) as days_overdue
+      FROM pr_lines l
+      WHERE l.expected_dlv_date IS NOT NULL 
+        AND l.expected_dlv_date != '' 
+        AND l.expected_dlv_date < ?
+        AND l.received_qty < l.purch_qty
+        AND (l.po_status NOT IN ('Cancelled') AND (l.tracking_status IS NULL OR l.tracking_status NOT LIKE '%cancel%'))
+        AND (? = 'All' OR l.plant = ?)
+      ORDER BY l.expected_dlv_date ASC
+      LIMIT 200
+    `).all(fourteenDaysAgo, plant, plant);
+
+    // 2. Stale Unassigned Lines (>30 days old without PO or purchaser)
+    const unassignedCount = db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM pr_lines l
+      WHERE (l.po_number IS NULL OR trim(l.po_number) = '')
+        AND (l.assigned_vendor IS NULL OR trim(l.assigned_vendor) = '' OR l.assigned_vendor = 'NONE')
+        AND (l.prl_status IS NULL OR l.prl_status NOT IN ('Rejected', 'Cancelled'))
+        AND (
+          (l.expected_dlv_date IS NOT NULL AND l.expected_dlv_date != '' AND l.expected_dlv_date < ?)
+          OR (l.created_at IS NOT NULL AND l.created_at < ?)
+        )
+        AND (? = 'All' OR l.plant = ?)
+    `).get(thirtyDaysAgo, thirtyDaysAgo, plant, plant).cnt;
+
+    const unassignedLines = db.prepare(`
+      SELECT l.*,
+             CAST(ROUND(julianday('now') - julianday(coalesce(nullif(l.expected_dlv_date, ''), l.created_at))) AS INTEGER) as days_unassigned
+      FROM pr_lines l
+      WHERE (l.po_number IS NULL OR trim(l.po_number) = '')
+        AND (l.assigned_vendor IS NULL OR trim(l.assigned_vendor) = '' OR l.assigned_vendor = 'NONE')
+        AND (l.prl_status IS NULL OR l.prl_status NOT IN ('Rejected', 'Cancelled'))
+        AND (
+          (l.expected_dlv_date IS NOT NULL AND l.expected_dlv_date != '' AND l.expected_dlv_date < ?)
+          OR (l.created_at IS NOT NULL AND l.created_at < ?)
+        )
+        AND (? = 'All' OR l.plant = ?)
+      ORDER BY l.expected_dlv_date ASC, l.created_at ASC
+      LIMIT 200
+    `).all(thirtyDaysAgo, thirtyDaysAgo, plant, plant);
+
+    // 3. Price Variance Lines (>10% variance across same item_id)
+    const varianceCount = db.prepare(`
+      WITH item_stats AS (
+        SELECT item_id, MIN(purchase_price) as min_price, MAX(purchase_price) as max_price, COUNT(DISTINCT purchase_price) as price_count
+        FROM pr_lines
+        WHERE item_id IS NOT NULL AND item_id != '' AND purchase_price > 0
+          AND (? = 'All' OR plant = ?)
+        GROUP BY item_id
+        HAVING price_count > 1 AND (MAX(purchase_price) - MIN(purchase_price)) / MIN(purchase_price) > 0.10
+      )
+      SELECT COUNT(*) as cnt
+      FROM pr_lines l
+      JOIN item_stats s ON l.item_id = s.item_id
+      WHERE l.purchase_price > s.min_price * 1.10
+        AND (? = 'All' OR l.plant = ?)
+    `).get(plant, plant, plant, plant).cnt;
+
+    const varianceItems = db.prepare(`
+      WITH item_stats AS (
+        SELECT item_id, MIN(purchase_price) as min_price, MAX(purchase_price) as max_price, AVG(purchase_price) as avg_price, COUNT(DISTINCT purchase_price) as price_count
+        FROM pr_lines
+        WHERE item_id IS NOT NULL AND item_id != '' AND purchase_price > 0
+          AND (? = 'All' OR plant = ?)
+        GROUP BY item_id
+        HAVING price_count > 1 AND (MAX(purchase_price) - MIN(purchase_price)) / MIN(purchase_price) > 0.10
+      )
+      SELECT l.*, s.min_price, s.max_price, s.avg_price,
+             ROUND(((l.purchase_price - s.min_price) / s.min_price) * 100, 1) as variance_pct
+      FROM pr_lines l
+      JOIN item_stats s ON l.item_id = s.item_id
+      WHERE l.purchase_price > s.min_price * 1.10
+        AND (? = 'All' OR l.plant = ?)
+      ORDER BY variance_pct DESC
+      LIMIT 200
+    `).all(plant, plant, plant, plant);
+
+    res.json({
+      success: true,
+      plant,
+      summary: {
+        severely_overdue_count: overdueCount,
+        stale_unassigned_count: unassignedCount,
+        price_variance_count: varianceCount,
+        total_alerts: overdueCount + unassignedCount + varianceCount
+      },
+      severely_overdue: overdueLines,
+      stale_unassigned: unassignedLines,
+      price_variance: varianceItems
+    });
+  } catch (err) {
+    console.error('Error fetching executive alerts:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5g. GET /api/audit-trail - Immutable Complete Status Audit Trail
+app.get('/api/audit-trail', requireAuth, (req, res) => {
+  try {
+    const { pr_number, line_id, limit = 200 } = req.query;
+    let query = `SELECT * FROM pr_status_history WHERE 1=1`;
+    const params = [];
+
+    if (line_id) {
+      query += ` AND line_id = ?`;
+      params.push(line_id);
+    } else if (pr_number) {
+      query += ` AND pr_number = ?`;
+      params.push(pr_number);
+    }
+
+    query += ` ORDER BY COALESCE(timestamp_utc, changed_at) DESC LIMIT ?`;
+    params.push(Number(limit) || 200);
+
+    const history = db.prepare(query).all(...params);
+    res.json({ success: true, count: history.length, history });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5h. GET /api/financial/purchaser-summary - High-level View-Only Purchaser Financial Metrics
+app.get('/api/financial/purchaser-summary', requireCashAccess, (req, res) => {
+  try {
+    const { plant } = req.query;
+    const userPlant = req.user?.permissions?.plant;
+    const effectivePlant = userPlant || plant;
+    let data = getCashSettlementData(db, { plant: effectivePlant });
+
+    // If standard purchaser, filter to only their own card
+    if (req.user?.permissions?.isPurchaser && req.user?.name) {
+      const buyerName = req.user.name.toLowerCase();
+      const buyerCode = (req.user.permissions?.buyerCode || '').toLowerCase();
+      data.purchasers = (data.purchasers || []).filter(p => {
+        const pName = (p.purchaser || '').toLowerCase();
+        return pName.includes(buyerName) || (buyerCode && pName.includes(buyerCode));
+      });
+      // Re-calculate totals for this purchaser
+      const totalAdvance = data.purchasers.reduce((acc, p) => acc + (p.totalAdvance || 0), 0);
+      const totalInvoice = data.purchasers.reduce((acc, p) => acc + (p.totalInvoice || 0), 0);
+      const totalReturn = data.purchasers.reduce((acc, p) => acc + (p.totalReturn || 0), 0);
+      const totalCashInHand = data.purchasers.reduce((acc, p) => acc + (p.cashInHand || 0), 0);
+      data.summary = {
+        totalAdvance,
+        totalInvoice,
+        totalReturn,
+        totalCashInHand,
+        unsettledCount: data.purchasers.reduce((acc, p) => acc + (p.unsettledCount || 0), 0),
+        emergencyCount: 0
+      };
+      if (data.records) {
+        data.records = data.records.filter(r => {
+          const pName = (r.purchaser || '').toLowerCase();
+          return pName.includes(buyerName) || (buyerCode && pName.includes(buyerCode));
+        });
+      }
+    }
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 6. GET /api/kpis - Dashboard Summary Counters
-app.get('/api/kpis', (req, res) => {
+app.get('/api/kpis', requireAuth, (req, res) => {
   try {
     const { plant } = req.query;
     let query = `SELECT * FROM pr_lines`;
     const params = [];
-    if (plant && plant !== 'All') {
+    const userPlant = req.user?.permissions?.plant;
+    const effectivePlant = userPlant ? userPlant : (plant && plant !== 'All' ? plant : null);
+    if (effectivePlant) {
       query += ` WHERE plant = ?`;
-      params.push(plant);
+      params.push(effectivePlant);
     }
 
-    const allLines = db.prepare(query).all(...params);
+    let allLines = db.prepare(query).all(...params);
+
+    const isPurchaser = req.user?.permissions?.isPurchaser;
+    const buyerCode = req.user?.permissions?.buyerCode;
+    if (isPurchaser && buyerCode) {
+      allLines = allLines.filter(l => {
+        const grp = getLineVendorGroup(l);
+        return grp === buyerCode || l.assigned_vendor === buyerCode || l.proposed_vendor === buyerCode;
+      });
+    }
 
     // Group lines by PR
     const prGroups = new Map();
@@ -788,7 +2325,7 @@ app.get('/api/kpis', (req, res) => {
 });
 
 // 6b. GET /api/dashboard/vendor-matrix - Vendor & Company Grouped Dashboard Matrix
-app.get('/api/dashboard/vendor-matrix', (req, res) => {
+app.get('/api/dashboard/vendor-matrix', requireAuth, (req, res) => {
   try {
     const { plant } = req.query;
     let query = `SELECT * FROM pr_lines`;
@@ -906,7 +2443,7 @@ app.get('/api/dashboard/vendor-matrix', (req, res) => {
 });
 
 // 7. POST /api/excel/re-import - On-Demand Excel Refresh
-app.post('/api/excel/re-import', (req, res) => {
+app.post('/api/excel/re-import', requireEditor, (req, res) => {
   try {
     runExcelImport();
     res.json({ success: true, message: 'Excel data re-imported successfully from excel_files folder!' });
@@ -917,7 +2454,7 @@ app.post('/api/excel/re-import', (req, res) => {
 });
 
 // 8. External SQL Configuration & Readiness
-app.get('/api/external-sql/config', (req, res) => {
+app.get('/api/external-sql/config', requireAuth, (req, res) => {
   try {
     let config = db.prepare(`SELECT * FROM external_sql_config WHERE id = 'default'`).get();
     if (!config) {
@@ -938,7 +2475,7 @@ app.get('/api/external-sql/config', (req, res) => {
   }
 });
 
-app.post('/api/external-sql/config', (req, res) => {
+app.post('/api/external-sql/config', requireEditor, (req, res) => {
   try {
     const { engine, host, port, database_name, username, password, query_or_view } = req.body;
     const existing = db.prepare(`SELECT * FROM external_sql_config WHERE id = 'default'`).get();
@@ -971,7 +2508,7 @@ app.post('/api/external-sql/config', (req, res) => {
   }
 });
 
-app.post('/api/external-sql/test', (req, res) => {
+app.post('/api/external-sql/test', requireEditor, (req, res) => {
   try {
     const { engine, host, port, database_name } = req.body;
     res.json({
@@ -986,7 +2523,7 @@ app.post('/api/external-sql/test', (req, res) => {
 });
 
 // 9. Export to CSV
-app.get('/api/export/csv', (req, res) => {
+app.get('/api/export/csv', requireAuth, (req, res) => {
   try {
     const type = req.query.type || 'lines';
     const plant = req.query.plant || 'All';
@@ -996,6 +2533,29 @@ app.get('/api/export/csv', (req, res) => {
     if (plant && plant !== 'All') {
       plantFilter = ' WHERE plant = ?';
       params.push(plant);
+    }
+
+    if (type === 'pending_lines') {
+      let q = `SELECT * FROM pr_lines WHERE (po_number IS NULL OR trim(po_number) = '')`;
+      const p = [];
+      if (plant && plant !== 'All') {
+        q += ` AND plant = ?`;
+        p.push(plant);
+      }
+      q += ` ORDER BY CASE WHEN expected_dlv_date IS NULL OR trim(expected_dlv_date) = '' THEN 1 ELSE 0 END, expected_dlv_date ASC, pr_number ASC, line_number ASC`;
+      const pLines = db.prepare(q).all(...p);
+      const headers = ['PLANT', 'PR NUMBER', 'LINE NUMBER', 'PR CREATION DATE', 'ITEM ID', 'ITEM DESCRIPTION', 'DEMAND QTY', 'UNIT', 'PR STATUS', 'ASSIGNED PURCHASER', 'REMARKS'];
+      const rows = [headers.join(',')];
+      for (const l of pLines) {
+        rows.push([
+          `"${l.plant}"`, `"${l.pr_number}"`, l.line_number, `"${l.expected_dlv_date || ''}"`, `"${l.item_id || ''}"`,
+          `"${(l.item_name || '').replace(/"/g, '""')}"`, l.purch_qty, `"${l.unit}"`, `"${l.prl_status || ''}"`,
+          `"${l.assigned_vendor || ''}"`, `"${(l.status_remarks || l.remarks || '').replace(/"/g, '""')}"`
+        ].join(','));
+      }
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="Pending_PO_Lines_${plant}.csv"`);
+      return res.send(rows.join('\r\n'));
     }
 
     if (type === 'prs') {
@@ -1083,6 +2643,80 @@ app.get('/api/export/csv', (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// 10. Google Drive Cash Settlements Endpoints
+// POST /api/gdrive/sync - Manual Sync from Google Drive (Admin, Mashhood, or Finance)
+app.post('/api/gdrive/sync', requireAuth, async (req, res) => {
+  try {
+    if (!req.user.permissions?.canSync) {
+      return res.status(403).json({ success: false, error: 'Permission denied. Syncing requires Admin, Mashhood, or Finance access.' });
+    }
+    const result = await syncGoogleDriveCashSettlements(db);
+    res.json({
+      success: true,
+      message: `Successfully pulled ${result.totalRecords} cash settlement records from Google Drive!`,
+      ...result
+    });
+  } catch (err) {
+    console.error('Google Drive Sync Error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/gdrive/cash-settlements - Retrieve Cash in Hand & Settlements Data
+app.get('/api/gdrive/cash-settlements', requireCashAccess, (req, res) => {
+  try {
+    const { plant, purchaser, status, search } = req.query;
+    const userPlant = req.user?.permissions?.plant;
+    const effectivePlant = userPlant || plant;
+
+    let effectivePurchaser = purchaser;
+    if (req.user?.permissions?.isPurchaser && req.user?.name) {
+      effectivePurchaser = req.user.name;
+    }
+
+    let data = getCashSettlementData(db, { plant: effectivePlant, purchaser: effectivePurchaser, status, search });
+
+    if (req.user?.permissions?.isPurchaser && req.user?.name) {
+      const buyerName = req.user.name.toLowerCase();
+      const buyerCode = (req.user.permissions?.buyerCode || '').toLowerCase();
+      data.records = (data.records || []).filter(r => {
+        const pName = (r.purchaser || '').toLowerCase();
+        return pName.includes(buyerName) || (buyerCode && pName.includes(buyerCode));
+      });
+      data.totalRecords = data.records.length;
+    }
+
+    res.json(data);
+  } catch (err) {
+    console.error('Error fetching cash settlements:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Auto-Sync Google Drive every 15 minutes (900,000 ms)
+const GDRIVE_SYNC_INTERVAL_MS = 15 * 60 * 1000;
+setInterval(async () => {
+  try {
+    console.log('[Auto-Sync] Fetching latest Google Drive cash settlements...');
+    await syncGoogleDriveCashSettlements(db);
+  } catch (err) {
+    console.error('[Auto-Sync Error]:', err.message);
+  }
+}, GDRIVE_SYNC_INTERVAL_MS);
+
+// Initial sync on startup if table is empty
+setTimeout(async () => {
+  try {
+    const rowCount = db.prepare('SELECT COUNT(*) as cnt FROM cash_settlements').get();
+    if (!rowCount || rowCount.cnt === 0) {
+      console.log('[Startup] Initializing Google Drive cash settlements cache...');
+      await syncGoogleDriveCashSettlements(db);
+    }
+  } catch (e) {
+    console.log('[Startup Sync Info]:', e.message);
+  }
+}, 3000);
 
 // Fallback to index.html
 app.get('*', (req, res) => {

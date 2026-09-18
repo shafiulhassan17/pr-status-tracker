@@ -74,16 +74,47 @@ pm2 startup
 
 ### Making It Accessible from Anywhere ("On Air" over Internet)
 Use **Cloudflare Tunnel** (free, secure, no open ports required):
-1. Download `cloudflared` from Cloudflare.
-2. Run:
+1. `cloudflared` is installed.
+2. Double click `start-cloudflared-tunnel.bat` or run:
    ```bash
-   cloudflared tunnel --url http://localhost:3000
+   cloudflared tunnel --edge-ip-version 4 --protocol http2 --url http://localhost:3000
    ```
-3. Cloudflare gives you a public URL (e.g. `https://pr-tracker-xyz.trycloudflare.com`) accessible from any phone or computer worldwide.
 
 ---
 
-## 4. Prompt to Give Antigravity on This PC
+## 4. Authentication & Security (Role-Based Access Control)
+
+The application features a secure login greeting overlay on all incoming connections:
+
+| Role | Password | Access Level | Description |
+| :--- | :--- | :--- | :--- |
+| **Viewer** | *(None)* | **Read-Only** | Instant 1-click access via "Continue as Viewer". Can view PRs, KPIs, vendor matrix, and history. All editing, status updates, purchaser reassignments, and Excel syncing are blocked. |
+| **Procurement Engineer** | `12345567` | **Total Access** | Full rights to update line tracking status, remarks, assigned purchasers, bulk update lines, and sync Excel. |
+| **Procurement Manager** | `12345678` | **Total Access** | Full administrative and editing rights across the entire portal. |
+
+- **Session Persistence**: Sessions are saved in SQLite (`auth_sessions`), preserving logged-in status across browser refreshes.
+- **Backend Protection**: All modifying API endpoints (`PATCH /api/lines/:id/status`, `PATCH /api/lines/:id/assigned-vendor`, `POST /api/lines/bulk-status`, `POST /api/excel/re-import`, `POST /api/external-sql/*`) enforce `403 Forbidden` if invoked with a Viewer role.
+
+---
+
+## 5. Mobile Device Optimization (Essential View Mode)
+
+The frontend automatically detects smartphone and tablet screens (`<= 768px`) and presents an **Essential Mobile View**:
+- **Requisitions Overview**: Replaces the 13-column master table with streamlined **Mobile Cards** highlighting:
+  - Plant badge (`CEPL` / `SPPL`)
+  - PR Number (e.g. `PR #102431`)
+  - General status pill (`Fully Received`, `Open order`, `Partially Delivered`)
+  - PO Number & Assigned Purchaser
+  - Delivery Progress bar + line delivery count (`X/Y lines delivered`)
+  - Expected Delivery Date (with `OVERDUE` alert if past due)
+  - Direct touch buttons: `Open Lines (N) ➔` and `🕒 History`
+- **PR Detail View**: Condenses 22 table columns into clean **Line Item Cards** showing item name, line #, demand vs received vs invoiced quantities, progress notes, and one-touch status update buttons for editors.
+- **Micro-Grid KPI Banner**: Compact 2-column grid saving 75% vertical screen space.
+- **Desktop Preservation**: Desktop users (`> 768px`) continue to see the full 13-column master spreadsheet table and 22-column line table with column toggles completely unchanged.
+
+---
+
+## 6. Prompt to Give Antigravity on This PC
 
 When opening this project in Antigravity on a new machine, paste this message to Antigravity:
 
